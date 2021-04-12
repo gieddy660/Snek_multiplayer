@@ -23,7 +23,7 @@ async def gather_keyboard():
         await asyncio.sleep(0.003)
 
 
-def draw_screen(news, olds):
+def draw_screen(news, olds):  # TODO: imporove
     global grid
     for x, y in olds:
         grid[y][x] = ' '
@@ -38,26 +38,20 @@ def draw_screen(news, olds):
 
 async def handle_connection(id_hash, host, port):
     while 1:
-        print('...hhh...')
         reader, writer = await asyncio.open_connection(host, port)
         writer.write(id_hash)
         writer.write(DIRECTION[direction])
         await writer.drain()
-        print('...bbb...')
 
         a_ = await reader.read(1)  # DEBUG: readexactly? -- even for following rows
         n_ = await reader.read(2)
         d_ = await reader.read(2)
-
-        print(a_, n_, d_)
 
         a = True if a_ == b'\x01' else False
         n = (n_[0] << 8) + n_[1]
         d = (d_[0] << 8) + d_[1]
         if not a:
             sys.exit()
-
-        print(a, n, d)
 
         news = []
         for _ in range(n):
@@ -66,7 +60,6 @@ async def handle_connection(id_hash, host, port):
             x = (x_[0] << 8) + x_[1]
             y = (y_[0] << 8) + y_[1]
             news.append((x, y))
-            print(x_, y_)
 
         olds = []
         for _ in range(d):
@@ -75,9 +68,6 @@ async def handle_connection(id_hash, host, port):
             x = (x_[0] << 8) + x_[1]
             y = (y_[0] << 8) + y_[1]
             olds.append((x, y))
-            print(x_, y_)
-
-        print(news, olds)
 
         draw_screen(news, olds)
         writer.close()

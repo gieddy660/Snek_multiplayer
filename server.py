@@ -185,7 +185,7 @@ class Server:
     def __init__(self, address, max_p, engine):
         self.address = address
         self.max_connections = max_p  # TODO: implement max_connections
-        self.players = {}
+        self.players = {}  # TODO: remove unresponsive players
         self.engine = engine
 
     def run(self):
