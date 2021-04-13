@@ -9,7 +9,7 @@ class Snek:
     MOVEMENT = {'u': (0, -1), 'l': (-1, 0), 'd': (0, 1), 'r': (1, 0), 'lol': (0, -3)}
 
     def __init__(self,  dir='u', pos=(0, 0)):
-        ''' snek spawns vertical, facing up, 3 blocks heigh '''
+        ''' snek spawns vertical, facing up, 3 blocks high '''
         self.dir = dir
         self.whole = [(pos[0], pos[1] + b) for b in range(3)]
         self.alive = True
@@ -46,10 +46,10 @@ class Snek:
 
     def move(self, grow=False):
         if grow:
-            res = (self.future, [])
+            res = (set(self.future), set())
             self.whole = self.future + self.whole
         else:
-            res = (self.future, self.tail)
+            res = (set(self.future), set(self.tail))
             self.whole = self.future + self.head + self.body
         return res
 
@@ -71,17 +71,17 @@ class Food(Snek):
     def future(self):
         return self.head
 
-    def move(self):
+    def move(self, grow=False):
         pass
 
 
 class SnekEngine:
-    def __init__(self, width, height, max_food, game_tick, *sneks, pacman=False):
+    def __init__(self, width, height, max_food, game_tick, sneks=[], foods=[], pacman=False):
         self.width = width
         self.height = height
         self.sneks = sneks
         self.target_food = max_food
-        self.foods = ()
+        self.foods = foods
         self.game_tick = game_tick
         self.pacman = pacman
 
@@ -90,15 +90,15 @@ class SnekEngine:
 
     @property
     def all_blocks(self):
-        res = []
+        res = set()
         for snek in self.sneks:
-            res += snek.whole
+            res |= set(snek.whole)
         for food in self.foods:
-            res += food.whole
+            res |= set(food.whole)
         return res
 
     def move(self):
-        res = [[], []]
+        res = [set(), set()]
 
         # kill sneks
         new_sneks = []
@@ -110,7 +110,7 @@ class SnekEngine:
 
             if not self.snek_within(s1) or any([s1 & s2 for s2 in self.sneks]):
                 s1.kill()
-                res[1] += s1.whole
+                res[1] |= set(s1.whole)
             else:
                 new_sneks.append(s1)
         self.sneks = new_sneks
@@ -122,7 +122,7 @@ class SnekEngine:
             for s1 in self.sneks:
                 if food & s1:
                     food.kill()
-                    res[1] += food.whole
+                    res[1] |= set(food.whole)
                     temp.add(s1)
                     break
             else:
@@ -132,14 +132,18 @@ class SnekEngine:
         # move sneks
         for snek in self.sneks:
             new, old = snek.move(snek in temp)  # IDEA: might be better to add a flag to snek
-            res[0] += new
-            res[1] += old
+            res[0] |= new
+            res[1] |= old
 
         # create food
         if len(self.foods) < self.target_food:
             t = self.create_food()
             if t is not None:
-                res[0] += t.head
+                res[0] |= set(t.head)
+
+        t = res[0] & res[1]
+        res[0] -= t
+        res[1] -= t
         return res
 
     def create_snek(self):
@@ -180,7 +184,7 @@ class Server:
     DEAD, ALIVE = b'\x00', b'\x01'
     DIRECTION = {b'\x01': 'u', b'\x02': 'l', b'\x03': 'd', b'\x04': 'r', b'\x05': 'lol'}
 
-    Player = make_dataclass('Player', [('snek', Snek), ('news', list), ('olds', list)])
+    Player = make_dataclass('Player', [('snek', Snek), ('news', set), ('olds', set)])
 
     def __init__(self, address, max_p, engine):
         self.address = address
@@ -194,12 +198,14 @@ class Server:
     async def loop(self):
         server = await asyncio.start_server(self.dispatch, self.address[0], self.address[1])
         async with server:
-            await server.start_serving()  # DEBUG: seems like it's workingut keep under control
+            await server.start_serving()  # DEBUG: seems like it's working, but keep under control
             async for news, olds in self.engine.loop():
                 print(news, olds)
                 for player in self.players.values():
-                    player.news += news
-                    player.olds += olds
+                    player.news |= news
+                    player.olds |= olds
+                    player.news -= olds
+                    player.olds -= news
 
     async def dispatch(self, reader, writer):
         '''
@@ -225,9 +231,9 @@ class Server:
         '''
         player_hash = await reader.read(Server.PLAYER_HASH_SIZE)  # DEBUG: readexactly?
         if player_hash not in self.players:
-            snek = self.engine.create_snek()  # TODO: check if none
-            news = self.engine.all_blocks
-            olds = []
+            snek = self.engine.create_snek()  # TODO: check if none, TODO: snek should be added to other players
+            news = set(self.engine.all_blocks)
+            olds = set()
             self.players[player_hash] = Server.Player(snek, news, olds)
         player = self.players[player_hash]
         new_direction = await reader.read(Server.DIR_MESSAGE_SIZE)
@@ -250,12 +256,13 @@ class Server:
             writer.write(x)
             writer.write(y)
         await writer.drain()
-
-        player.news = []
-        player.olds = []
+        player.news = set()
+        player.olds = set()
+        writer.close()
+        await writer.wait_closed()
 
 
 if __name__ == '__main__':
-    engine = SnekEngine(20, 20, 2, 0.1, pacman=True)
-    server = Server(('192.168.86.190', 12345), 5, engine)
+    engine = SnekEngine(20, 20, 2, 1, pacman=True)
+    server = Server(('', 12345), 5, engine)
     server.run()

@@ -72,12 +72,12 @@ async def handle_connection(id_hash, host, port):
         draw_screen(news, olds)
         writer.close()
         await writer.wait_closed()
-        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.1)
 
 
 async def main():
     id_hash = (random.getrandbits(64)).to_bytes(8, 'big')
-    host = '192.168.86.190'
+    host = 'localhost'
     port = 12345
     print(id_hash, host, port)
     await asyncio.gather(handle_connection(id_hash, host, port), gather_keyboard())
