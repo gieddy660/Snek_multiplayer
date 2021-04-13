@@ -1,5 +1,6 @@
 import asyncio
 import random
+import time
 from dataclasses import make_dataclass
 
 # pacman effect -> snek wraps to the other side when it exits
@@ -108,7 +109,7 @@ class SnekEngine:
             else:
                 s1.dimensions = ()
 
-            if not self.snek_within(s1) or any([s1 & s2 for s2 in self.sneks]):
+            if not self.snek_within(s1) or any([s1 & s2 for s2 in self.sneks]) or not s1.alive:
                 s1.kill()
                 res[1] |= set(s1.whole)
             else:
@@ -183,13 +184,14 @@ class Server:
     DIR_MESSAGE_SIZE = 1
     DEAD, ALIVE = b'\x00', b'\x01'
     DIRECTION = {b'\x01': 'u', b'\x02': 'l', b'\x03': 'd', b'\x04': 'r', b'\x05': 'lol'}
+    KICK_TIME = 10
 
-    Player = make_dataclass('Player', [('snek', Snek), ('news', set), ('olds', set)])
+    Player = make_dataclass('Player', [('snek', Snek), ('news', set), ('olds', set), ('last', float)])
 
     def __init__(self, address, max_p, engine):
         self.address = address
         self.max_connections = max_p  # TODO: implement max_connections
-        self.players = {}  # TODO: remove unresponsive players
+        self.players = {}
         self.engine = engine
 
     def run(self):
@@ -199,13 +201,21 @@ class Server:
         server = await asyncio.start_server(self.dispatch, self.address[0], self.address[1])
         async with server:
             await server.start_serving()  # DEBUG: seems like it's working, but keep under control
+
             async for news, olds in self.engine.loop():
                 print(news, olds)
-                for player in self.players.values():
+
+                new_players = {}
+                for hash_id, player in self.players.items():
                     player.news |= news
                     player.olds |= olds
                     player.news -= olds
                     player.olds -= news
+                    if time.time() - player.last > Server.KICK_TIME:
+                        player.snek.kill()
+                    else:
+                        new_players[hash_id] = player
+                self.players = new_players
 
     async def dispatch(self, reader, writer):
         '''
@@ -234,7 +244,8 @@ class Server:
             snek = self.engine.create_snek()  # TODO: check if none, TODO: snek should be added to other players
             news = set(self.engine.all_blocks)
             olds = set()
-            self.players[player_hash] = Server.Player(snek, news, olds)
+            last = time.time()
+            self.players[player_hash] = Server.Player(snek, news, olds, last)
         player = self.players[player_hash]
         new_direction = await reader.read(Server.DIR_MESSAGE_SIZE)
         player.snek.dir = Server.DIRECTION[new_direction]
@@ -256,13 +267,15 @@ class Server:
             writer.write(x)
             writer.write(y)
         await writer.drain()
+
         player.news = set()
         player.olds = set()
+        player.last = time.time()
         writer.close()
         await writer.wait_closed()
 
 
 if __name__ == '__main__':
-    engine = SnekEngine(20, 20, 2, 1, pacman=True)
+    engine = SnekEngine(20, 20, 2, 0.2, pacman=True)
     server = Server(('', 12345), 5, engine)
     server.run()
