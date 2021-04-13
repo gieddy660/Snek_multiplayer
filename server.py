@@ -296,5 +296,5 @@ class Server:
 
 if __name__ == '__main__':
     engine = SnekEngine(20, 20, 2, 0.2, pacman=True)
-    server = Server(('', 12345), 5, engine)
+    server = Server(('', 12345), engine)
     server.run()
