@@ -5,6 +5,10 @@ import random
 
 DIRECTION = {'u': b'\x01', 'l': b'\x02', 'd': b'\x03', 'r': b'\x04', 'lol': b'\x05'}
 
+A_MESSAGE_SIZE = 1
+N_MESSAGE_SIZE = D_MESSAGE_SIZE = 2
+X_MESSAGE_SIZE = Y_MESSAGE_SIZE = 2
+
 
 async def gather_keyboard():
     global direction
@@ -42,37 +46,40 @@ async def handle_connection(id_hash, host, port):
         writer.write(id_hash)
         writer.write(DIRECTION[direction])
         await writer.drain()
+        try:
+            a_ = await reader.readexactly(A_MESSAGE_SIZE)
+            n_ = await reader.readexactly(N_MESSAGE_SIZE)
+            d_ = await reader.readexactly(D_MESSAGE_SIZE)
 
-        a_ = await reader.read(1)  # DEBUG: readexactly? -- even for following rows
-        n_ = await reader.read(2)
-        d_ = await reader.read(2)
+            a = True if a_ == b'\x01' else False
+            n = (n_[0] << 8) + n_[1]
+            d = (d_[0] << 8) + d_[1]
+            if not a:
+                sys.exit()
 
-        a = True if a_ == b'\x01' else False
-        n = (n_[0] << 8) + n_[1]
-        d = (d_[0] << 8) + d_[1]
-        if not a:
-            sys.exit()
+            news = []
+            for _ in range(n):
+                x_ = await reader.readexactly(X_MESSAGE_SIZE)
+                y_ = await reader.readexactly(Y_MESSAGE_SIZE)
+                x = (x_[0] << 8) + x_[1]
+                y = (y_[0] << 8) + y_[1]
+                news.append((x, y))
 
-        news = []
-        for _ in range(n):
-            x_ = await reader.read(2)
-            y_ = await reader.read(2)
-            x = (x_[0] << 8) + x_[1]
-            y = (y_[0] << 8) + y_[1]
-            news.append((x, y))
+            olds = []
+            for _ in range(d):
+                x_ = await reader.readexactly(X_MESSAGE_SIZE)
+                y_ = await reader.readexactly(Y_MESSAGE_SIZE)
+                x = (x_[0] << 8) + x_[1]
+                y = (y_[0] << 8) + y_[1]
+                olds.append((x, y))
 
-        olds = []
-        for _ in range(d):
-            x_ = await reader.read(2)
-            y_ = await reader.read(2)
-            x = (x_[0] << 8) + x_[1]
-            y = (y_[0] << 8) + y_[1]
-            olds.append((x, y))
-
-        draw_screen(news, olds)
-        writer.close()
-        await writer.wait_closed()
-        await asyncio.sleep(0.1)
+            draw_screen(news, olds)
+        except asyncio.IncompleteReadError:
+            print("can't communicate with the server")
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            await asyncio.sleep(0.01)
 
 
 async def main():

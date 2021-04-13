@@ -77,12 +77,12 @@ class Food(Snek):
 
 
 class SnekEngine:
-    def __init__(self, width, height, max_food, game_tick, sneks=[], foods=[], pacman=False):
+    def __init__(self, width, height, max_food, game_tick, sneks=(), foods=(), pacman=False):
         self.width = width
         self.height = height
-        self.sneks = sneks
+        self.sneks = list(sneks)
         self.target_food = max_food
-        self.foods = foods
+        self.foods = list(foods)
         self.game_tick = game_tick
         self.pacman = pacman
 
@@ -188,17 +188,18 @@ class Server:
 
     Player = make_dataclass('Player', [('snek', Snek), ('news', set), ('olds', set), ('last', float)])
 
-    def __init__(self, address, max_p, engine):
+    def __init__(self, address, engine, max_connections=5):
         self.address = address
-        self.max_connections = max_p  # TODO: implement max_connections
-        self.players = {}
         self.engine = engine
+        self.max_connections = max_connections
+        self.players = {}
 
     def run(self):
         asyncio.run(self.loop())
 
     async def loop(self):
-        server = await asyncio.start_server(self.dispatch, self.address[0], self.address[1])
+        server = await asyncio.start_server(self.dispatch, self.address[0], self.address[1],
+                                            backlog=self.max_connections)
         async with server:
             await server.start_serving()  # DEBUG: seems like it's working, but keep under control
 
@@ -239,16 +240,34 @@ class Server:
         x = x coordinate of the block ..................... (2 bytes)
         y = y coordinate of the block ..................... (2 bytes)
         '''
-        player_hash = await reader.read(Server.PLAYER_HASH_SIZE)  # DEBUG: readexactly?
-        if player_hash not in self.players:
-            snek = self.engine.create_snek()  # TODO: check if none, TODO: snek should be added to other players
-            news = set(self.engine.all_blocks)
-            olds = set()
-            last = time.time()
-            self.players[player_hash] = Server.Player(snek, news, olds, last)
+        try:
+            player_hash = await reader.readexactly(Server.PLAYER_HASH_SIZE)
+            new_dir = await reader.readexactly(Server.DIR_MESSAGE_SIZE)
+            if player_hash not in self.players:
+                if len(self.players) >= self.max_connections:
+                    raise ConnectionError
+                snek = self.engine.create_snek()
+                if snek is None:
+                    raise ValueError
+                news = set(self.engine.all_blocks)
+                olds = set()
+                last = time.time()
+                self.players[player_hash] = Server.Player(snek, news, olds, last)
+                for player in self.players.values():
+                    player.news |= set(snek.whole)
+        except (asyncio.IncompleteReadError, ConnectionError, ValueError) as err:
+            writer.close()
+            if isinstance(err, asyncio.IncompleteReadError):
+                print('failed connection attempt')
+            elif isinstance(err, ConnectionError):
+                print('full server')
+            elif isinstance(err, ValueError):
+                print("can't generate any snek")
+            await writer.wait_closed()
+            return
+
         player = self.players[player_hash]
-        new_direction = await reader.read(Server.DIR_MESSAGE_SIZE)
-        player.snek.dir = Server.DIRECTION[new_direction]
+        player.snek.dir = Server.DIRECTION[new_dir]
 
         a = Server.ALIVE if player.snek.alive else Server.DEAD
         n = bytes([len(player.news) & 0xff00, len(player.news) & 0xff])
