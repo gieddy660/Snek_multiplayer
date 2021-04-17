@@ -1,0 +1,23 @@
+TODO: define new communication protocol
+- different commands from the client
+
+- number of sneks in order (first snek represents the player)
+- number of foods
+
+- for each snek
+    - number of new blocks (in order)
+    - number of old blocks (in order)
+
+- for each food
+    - block
+
+    - for each block
+        - x coordinate
+        - y coordinate
+
+also:
+- dimension of the game
+- game_mode (e.g. pacman / non pacman)
+
+TODO: implement new communication in server
+TODO: implement new communication in client
