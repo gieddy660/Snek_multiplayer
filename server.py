@@ -2,6 +2,7 @@ import asyncio
 import random
 import time
 from dataclasses import make_dataclass
+from functools import partial
 
 # pacman effect -> snek wraps to the other side when it exits
 
@@ -14,7 +15,6 @@ class Snek:
         self.dir = dir
         self.whole = [(pos[0], pos[1] + b) for b in range(3)]
         self.alive = True
-        self.dimensions = ()
 
     @property
     def head(self):
@@ -34,12 +34,8 @@ class Snek:
 
     @property
     def future(self):
-        if self.dimensions == ():
-            zip_ = zip(self.head[0], Snek.MOVEMENT[self.dir])
-            t = [tuple(a + b for a, b in zip_)]
-        else:
-            zip_ = zip(self.head[0], Snek.MOVEMENT[self.dir], self.dimensions)
-            t = [tuple((a + b) % c for a, b, c in zip_)]
+        zip_ = zip(self.head[0], type(self).MOVEMENT[self.dir])
+        t = [tuple(a + b for a, b in zip_)]
         return t
 
     def kill(self):
@@ -63,6 +59,18 @@ class Snek:
         return len(self.whole)
 
 
+class PacManSnek(Snek):
+    def __init__(self, dimensions, dir='u', pos=(0, 0)):
+        super().__init__(dir, pos)
+        self.dimensions = dimensions
+
+    @property
+    def future(self):
+        zip_ = zip(self.head[0], type(self).MOVEMENT[self.dir], self.dimensions)
+        t = [tuple((a + b) % c for a, b, c in zip_)]
+        return t
+
+
 class Food(Snek):
     def __init__(self, pos=(0, 0)):
         self.whole = [pos]
@@ -77,14 +85,15 @@ class Food(Snek):
 
 
 class SnekEngine:
-    def __init__(self, width, height, max_food, game_tick, sneks=(), foods=(), pacman=False):
+    _snek_factory = Snek
+
+    def __init__(self, width, height, max_food, game_tick, sneks=(), foods=()):
         self.width = width
         self.height = height
         self.sneks = list(sneks)
         self.target_food = max_food
         self.foods = list(foods)
         self.game_tick = game_tick
-        self.pacman = pacman
 
     def snek_within(self, snek):
         return 0 <= snek.future[0][0] < self.width and 0 <= snek.future[0][1] < self.height
@@ -104,11 +113,6 @@ class SnekEngine:
         # kill sneks
         new_sneks = []
         for s1 in self.sneks:
-            if self.pacman:
-                s1.dimensions = (self.width, self.height)
-            else:
-                s1.dimensions = ()
-
             if not self.snek_within(s1) or any([s1 & s2 for s2 in self.sneks]) or not s1.alive:
                 s1.kill()
                 res[1] |= set(s1.whole)
@@ -149,13 +153,13 @@ class SnekEngine:
 
     def create_snek(self):
         t = []
-        for y in range(3, self.height-3,):
+        for y in range(3, self.height-3):
             for x in range(self.width):
                 if (x, y) not in self.all_blocks:
                     t.append((x, y))
 
-        if len(t) > 0:
-            res = Snek(pos=random.choice(t))
+        if t:
+            res = self._snek_factory(pos=random.choice(t))
             self.sneks.append(res)
             return res
         return None  # IDEA: maybe raise instead
@@ -167,7 +171,7 @@ class SnekEngine:
                 if (x, y) not in self.all_blocks:
                     t.append((x, y))
 
-        if len(t) > 0:
+        if t:
             res = Food(pos=random.choice(t))
             self.foods.append(res)
             return res
@@ -177,6 +181,14 @@ class SnekEngine:
         while 1:
             yield self.move()
             await asyncio.sleep(self.game_tick)
+
+
+class PacManSnekEngine(SnekEngine):
+    _snek_factory = PacManSnek
+
+    def __init__(self, width, height, max_food, game_tick, sneks=(), foods=()):
+        super().__init__(width, height, max_food, game_tick, sneks, foods)
+        self._snek_factory = partial(self._snek_factory, dimensions=(width, height))  # ugly?
 
 
 class Server:
@@ -295,6 +307,6 @@ class Server:
 
 
 if __name__ == '__main__':
-    engine = SnekEngine(20, 20, 2, 0.2, pacman=True)
-    server = Server(('', 12345), engine)
+    engine = PacManSnekEngine(width=20, height=20, max_food=2, game_tick=0.2)
+    server = Server(address=('', 12345), engine=engine)
     server.run()
