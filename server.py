@@ -11,7 +11,7 @@ class Snek:
     MOVEMENT = {'u': (0, -1), 'l': (-1, 0), 'd': (0, 1), 'r': (1, 0), 'lol': (0, -3)}
 
     def __init__(self,  dir='u', pos=(0, 0)):
-        ''' snek spawns vertical, facing up, 3 blocks high '''
+        """ snek spawns vertical, facing up, 3 blocks high """
         self.dir = dir
         self.whole = [(pos[0], pos[1] + b) for b in range(3)]
         self.alive = True
@@ -231,7 +231,7 @@ class Server:
                 self.players = new_players
 
     async def dispatch(self, reader, writer):
-        '''
+        """
               | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
         s  =  [           play_id_hash        |
               | d ]
@@ -251,7 +251,7 @@ class Server:
         d = number of deleted blocks ...................... (2 bytes)
         x = x coordinate of the block ..................... (2 bytes)
         y = y coordinate of the block ..................... (2 bytes)
-        '''
+        """
         try:
             player_hash = await reader.readexactly(Server.PLAYER_HASH_SIZE)
             new_dir = await reader.readexactly(Server.DIR_MESSAGE_SIZE)
