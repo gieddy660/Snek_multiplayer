@@ -1,23 +1,175 @@
-TODO: define new communication protocol
-- different commands from the client
+Each player is represented by:
+    - hash id
+    - name (optional)
+    note: hash id a must be unique
 
-- number of sneks in order (first snek represents the player)
-- number of foods
 
-- for each snek
-    - number of new blocks (in order)
-    - number of old blocks (in order)
+Flow of the game:
+    - players registers to the server
+    - player sends commands and queries to the server to get status and set data about itself
+    - player dies
 
-- for each food
-    - block
 
+Commands:
+    0 register to server
+    1 set direction
+    2 get game info
+    3 get current state
+    4 get updated state
+    254 get current state (old mode)
+    255 get updated state (old mode)
+
+
+Client message format:
+0 ->
+    | 0 (| name as UTF-8 string )|
+
+1 ->
+    | 1 | play id hash | direction |
+
+2 ->
+    | 2 |
+
+3 ->
+    | 3 (| play id hash )|
+
+4 ->
+    | 4 | play id hash |
+
+254 ->
+    |254(| play id hash )|
+
+255 ->
+    |255| play id hash |
+
+
+
+Server answer:
+0 -> register player to server:
+    player hash id (8 bytes)
+
+
+1 -> sets direction for player with given hash:
+    - ack (1 byte)
+
+
+2 -> sends to the player game settings info:
+    - id of game mode (1 byte)
+        (es -> 0: normal; 1: pacman; ... )
+    - game height (2 bytes)
+    - game width (2 bytes)
+
+
+3 -> sends to player game state info:
+    player:
+        - alive (1 byte)
+        (- data (es: name, length)) (variable length)
+        - number of blocks (4 bytes)
+        - 0 (4 bytes)
+        for each block:
+           - x coordinate (2 bytes)
+           - y coordinate (2 bytes)
+
+    - number of sneks (see note (3))
+    for each snek (both deleted and new):
+        - 1 (1 byte)
+        (- data) (variable length)
+        - number of blocks in order (4 bytes)
+        - 0 (4 bytes)
+        for each block:
+           - x coordinate (2 bytes)
+           - y coordinate (2 bytes)
+
+    for each type of snek like object (food, walls, ecc)
+        - number of snek like objects (see note (3))
+        for each snek like object (both deleted and new)
+            - 1 (1 byte)
+            (- data) (variable length)
+            - number of new blocks (4 bytes)
+            - 0 (4 bytes)
+            for each block:
+               - x coordinate (2 bytes)
+               - y coordinate (2 bytes)
+    (it's sent like this so that it can be treated as a snek)
+
+
+4 -> sends to player updates to the state of the game since last request:
+    player:
+        - alive (1 byte)
+        (- data (es. name, length)) (variable length)
+        - number of new blocks (4 bytes)
+        - number of old blocks (4 bytes)
+        for each block:
+            - x coordinate (2 bytes)
+            - y coordinate (2 bytes)
+
+    - number of sneks (both dead or alive, old and new, see note (4))
+    for each snek (both deleted and new):
+        - alive (1 byte)
+        (- data) (variable length)
+        - number of new blocks in order (4 bytes)
+        - number of old blocks in order (4 bytes)
+        for each block:
+            - x coordinate (2 bytes)
+            - y coordinate (2 bytes)
+
+    for each type of snek like object (food, walls, ecc)
+        - number of snek like objects (both dead or alive, old and new, see note (4))
+        for each snek like object (both deleted and new)
+            - alive (1 byte)
+            (- data) (variable length)
+            - number of new blocks (4 bytes)
+            - number of old blocks (4 bytes)
+            for each block:
+                - x coordinate (2 bytes)
+                - y coordinate (2 bytes)
+    (it's sent like this so that it can be treated as a snek)
+
+
+254 -> sends current state in old mode, meaning it only sends old and new blocks and if the player is alive:
+    - alive (1 byte)
+
+    - number of new blocks (4 bytes)
+    - 0 (4 bytes)
+    for each block:
+        - x coordinate (2 bytes)
+        - y coordinate (2 bytes)
+
+
+255 -> like 3 but doesn't distinguish between different sneks and food:
+    - alive (1 byte)
+
+    - number of new blocks (4 bytes)
+    - number of old blocks (4 bytes)
     - for each block
-        - x coordinate
-        - y coordinate
+        - x coordinate (2 bytes)
+        - y coordinate (2 bytes)
 
-also:
-- dimension of the game
-- game_mode (e.g. pacman / non pacman)
+Notes:
+(1) All numbers are big endian.
+
+(2) for commands 3 and 254 hash id of a player is optional. If not given # TODO: (but something like "it sends a dummy player rather than a new one")
+
+(3) Differently to command 4 the only objects to be sent are the ones alive right now, so if an object
+    dies between two adjacent messages the server doesn't communicate it directly. Therefore the client
+    should discard current state of the game every time it uses command this command.
+    es:
+    message 1: A B C
+    meanwhile B dies and D joins
+    message 2: A C D
+    (note that the server doesn't directly communicate identity of an object so the client can't know
+    directly that the second object sent is now C rather than B)
+
+(4) Objects of each type are sent in order, so that the first object sent in two following messages is
+    the same object, and the same applies for the second, third, ans so on. If an object is to be deleted
+    the server will still send it in the following message marking it as dead. It will not be sent in
+    subsequent messages. Objects that are to be added will be added at the bottom of the list.
+    es:
+    message 1: A B C
+    message 2: A B C D
+    message 3: A B.dead C D
+    message 4: A C D
+
 
 TODO: implement new communication in server
 TODO: implement new communication in client
