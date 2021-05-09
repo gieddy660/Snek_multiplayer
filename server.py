@@ -1,157 +1,155 @@
 import asyncio
+import json
 import random
 import time
 from dataclasses import make_dataclass
 from functools import partial
 
+import snekpi
+
+
 # pacman effect -> snek wraps to the other side when it exits
 
 
-class Snek:
+class Snek(snekpi.BaseSnek):
     MOVEMENT = {'u': (0, -1), 'l': (-1, 0), 'd': (0, 1), 'r': (1, 0), 'lol': (0, -3)}
 
-    def __init__(self,  dir='u', pos=(0, 0)):
+    def __init__(self, direction='u', pos=(0, 0), name=''):
         """ snek spawns vertical, facing up, 3 blocks high """
-        self.dir = dir
-        self.whole = [(pos[0], pos[1] + b) for b in range(3)]
-        self.alive = True
+        data = {'name': name}
+        whole = [(pos[0], pos[1] + b) for b in range(3)]
+        super().__init__(whole=whole, data=data)
+        self.dir = direction
+
+        self.will_grow = False
 
     @property
-    def head(self):
-        return self.whole[:1]
-
-    @head.setter
-    def head(self, value):
-        self.whole[:1] = value
-
-    @property
-    def body(self):
-        return self.whole[1: -1]
-
-    @property
-    def tail(self):
-        return self.whole[-1:]
-
-    @property
-    def future(self):
+    def future_head(self):
         zip_ = zip(self.head[0], type(self).MOVEMENT[self.dir])
         t = [tuple(a + b for a, b in zip_)]
         return t
 
-    def kill(self):
-        self.alive = False
-
-    def move(self, grow=False):
-        if grow:
-            res = (set(self.future), set())
-            self.whole = self.future + self.whole
+    @property
+    def future_body(self):
+        if self.will_grow:
+            return self.future_head + self.whole
         else:
-            res = (set(self.future), set(self.tail))
-            self.whole = self.future + self.head + self.body
+            return self.future_head + self.head + self.body
+
+    def move(self):
+        res = (self.future_head, ()) if self.will_grow else (self.future_head, self.tail)
+        super().move()
+        self.will_grow = False
         return res
 
-    def __and__(self, other):
+    def __rshift__(self, other):
         if other is self:
-            return self.future[0] in (other.head + other.body)
-        return self.future[0] in (other.future + other.head + other.body)
-
-    def __len__(self):
-        return len(self.whole)
+            return self.future_head[0] in (other.head + other.body)
+        return self.future_head[0] in (other.future_head + other.head + other.body)
 
 
 class PacManSnek(Snek):
-    def __init__(self, dimensions, dir='u', pos=(0, 0)):
-        super().__init__(dir, pos)
+    def __init__(self, dimensions, direction='u', pos=(0, 0)):
+        super().__init__(direction, pos)
         self.dimensions = dimensions
 
     @property
-    def future(self):
+    def future_head(self):
         zip_ = zip(self.head[0], type(self).MOVEMENT[self.dir], self.dimensions)
         t = [tuple((a + b) % c for a, b, c in zip_)]
         return t
 
 
-class Food(Snek):
+class Food(snekpi.BaseSnek):
     def __init__(self, pos=(0, 0)):
-        self.whole = [pos]
-        self.alive = True
+        whole = [pos]
+        super().__init__(whole=whole)
 
-    @property
-    def future(self):
-        return self.head
-
-    def move(self, grow=False):
-        pass
+# TODO: testing
 
 
 class SnekEngine:
     _snek_factory = Snek
+    mode = 0
 
     def __init__(self, width, height, max_food, game_tick, sneks=(), foods=()):
         self.width = width
         self.height = height
-        self.sneks = list(sneks)
         self.target_food = max_food
+        self.sneks = list(sneks)
         self.foods = list(foods)
         self.game_tick = game_tick
 
     def snek_within(self, snek):
-        return 0 <= snek.future[0][0] < self.width and 0 <= snek.future[0][1] < self.height
+        return 0 <= snek.future_head[0][0] < self.width and 0 <= snek.future_head[0][1] < self.height
+
+    @property
+    def infos(self):
+        return {'mode': self.mode, 'width': self.width, 'height': self.height}
 
     @property
     def all_blocks(self):
-        res = set()
+        res = []
         for snek in self.sneks:
-            res |= set(snek.whole)
+            res += snek.whole
         for food in self.foods:
-            res |= set(food.whole)
+            res += food.whole
         return res
 
+    @property
+    def all_objects(self):
+        # sneks = {}
+        # foods = {}
+        # for snek in self.sneks:
+        #     sneks[snek] = snek.whole
+        # for food in self.foods:
+        #     foods[food] = food.whole  # maybe we could use something other than a dict
+        return self.sneks, (self.foods,)
+
     def move(self):
-        res = [set(), set()]
+        new_foods = []
+        new_blocks = {}
+        old_blocks = {}
 
         # kill sneks
-        new_sneks = []
+        keep_sneks = []
         for s1 in self.sneks:
-            if not self.snek_within(s1) or any([s1 & s2 for s2 in self.sneks]) or not s1.alive:
+            if not self.snek_within(s1) or any((s1 >> s2 for s2 in self.sneks)) or not s1.alive:
                 s1.kill()
-                res[1] |= set(s1.whole)
+                old_blocks[s1] = s1.whole
             else:
-                new_sneks.append(s1)
-        self.sneks = new_sneks
+                keep_sneks.append(s1)
+        self.sneks = keep_sneks
 
         # eat food
-        new_foods = []
-        temp = set()
+        keep_foods = []
         for food in self.foods:
             for s1 in self.sneks:
-                if food & s1:
+                if s1 >> food:
                     food.kill()
-                    res[1] |= set(food.whole)
-                    temp.add(s1)
+                    s1.will_grow = True
+                    old_blocks[food] = food.whole
                     break
             else:
-                new_foods.append(food)
-        self.foods = new_foods
+                keep_foods.append(food)
+        self.foods = keep_foods
 
         # move sneks
         for snek in self.sneks:
-            new, old = snek.move(snek in temp)  # IDEA: might be better to add a flag to snek
-            res[0] |= new
-            res[1] |= old
+            new, old = snek.move()
+            new_blocks[snek] = new
+            old_blocks[snek] = old
 
         # create food
         if len(self.foods) < self.target_food:
-            t = self.create_food()
-            if t is not None:
-                res[0] |= set(t.head)
+            food = self.create_food()
+            if food is not None:
+                new_foods.append(food)
+                new_blocks[food] = food.whole
 
-        t = res[0] & res[1]
-        res[0] -= t
-        res[1] -= t
-        return res
+        return new_foods, new_blocks, old_blocks
 
-    def create_snek(self):
+    def create_snek(self, *args, **kwargs):
         t = []
         for y in range(3, self.height-3):
             for x in range(self.width):
@@ -159,7 +157,7 @@ class SnekEngine:
                     t.append((x, y))
 
         if t:
-            res = self._snek_factory(pos=random.choice(t))
+            res = self._snek_factory(pos=random.choice(t), *args, **kwargs)
             self.sneks.append(res)
             return res
         return None  # IDEA: maybe raise instead
@@ -185,10 +183,13 @@ class SnekEngine:
 
 class PacManSnekEngine(SnekEngine):
     _snek_factory = PacManSnek
+    mode = 1
 
     def __init__(self, width, height, max_food, game_tick, sneks=(), foods=()):
         super().__init__(width, height, max_food, game_tick, sneks, foods)
         self._snek_factory = partial(self._snek_factory, dimensions=(width, height))  # ugly?
+
+# TODO: testing
 
 
 class Server:
@@ -198,13 +199,16 @@ class Server:
     DIRECTION = {b'\x01': 'u', b'\x02': 'l', b'\x03': 'd', b'\x04': 'r', b'\x05': 'lol'}
     KICK_TIME = 10
 
-    Player = make_dataclass('Player', [('snek', Snek), ('news', set), ('olds', set), ('last', float)])
+    Player = make_dataclass('Player', [('snek', snekpi.BaseSnek), ('last', float)])
 
     def __init__(self, address, engine, max_connections=5):
         self.address = address
         self.engine = engine
         self.max_connections = max_connections
         self.players = {}
+        self.cases = {0: self.register, 1: self.set_dir, 2: self.engine_info,
+                      3: self.get_state_current, 4: self.get_state_updated,
+                      254: self.get_state_current_old, 255: self.get_state_updated_old}
 
     def run(self):
         asyncio.run(self.loop())
@@ -214,10 +218,7 @@ class Server:
                                             backlog=self.max_connections)
         async with server:
             await server.start_serving()  # DEBUG: seems like it's working, but keep under control
-
-            async for news, olds in self.engine.loop():
-                print(news, olds)
-
+            async for news, olds in self.engine.loop():  # TODO: restructure completely
                 new_players = {}
                 for hash_id, player in self.players.items():
                     player.news |= news
@@ -228,64 +229,94 @@ class Server:
                         player.snek.kill()
                     else:
                         new_players[hash_id] = player
-                self.players = new_players
 
-    async def dispatch(self, reader, writer):
-        try:
-            player_hash = await reader.readexactly(Server.PLAYER_HASH_SIZE)
-            new_dir = await reader.readexactly(Server.DIR_MESSAGE_SIZE)
-            if player_hash not in self.players:
-                if len(self.players) >= self.max_connections:
-                    raise ConnectionError
-                snek = self.engine.create_snek()
-                if snek is None:
-                    raise ValueError
-                news = set(self.engine.all_blocks)
-                olds = set()
-                last = time.time()
-                self.players[player_hash] = Server.Player(snek, news, olds, last)
-                for player in self.players.values():
-                    player.news |= set(snek.whole)
-        except (asyncio.IncompleteReadError, ConnectionError, ValueError) as err:
-            writer.close()
-            if isinstance(err, asyncio.IncompleteReadError):
-                print('failed connection attempt')
-            elif isinstance(err, ConnectionError):
-                print('full server')
-            elif isinstance(err, ValueError):
-                print("can't generate any snek")
-            await writer.wait_closed()
+    @classmethod
+    def decode(cls, c, args):  # TODO: add exception handling
+        if c == 0:
+            return args.decode('utf8'),
+        elif c == 1:
+            return args[:8], cls.DIRECTION[args[8]]
+        elif c == 2:
+            return args,
+        elif c == 3:
+            return args,
+        elif c == 4:
+            return args,
+        elif c == 254:
+            return args,
+        elif c == 255:
+            return args,
+        raise LookupError(f'invalid command: {c}')
+
+    def register(self, name):  # TODO: rework for new self.player
+        hash_id = random.getrandbits(64).to_bytes(8, 'big')
+        if hash_id in self.players:
             return
+        snek = self.engine.create_snek(name=name)
+        player = Server.Player(snek, time.time())
+        self.players[hash_id] = player
+        return hash_id
 
-        player = self.players[player_hash]
-        player.snek.dir = Server.DIRECTION[new_dir]
+    def set_dir(self, hash_id, direction):  # add exception handling
+        player = self.players[hash_id]
+        player.dir = direction
+        return b'\x00'
 
-        a = Server.ALIVE if player.snek.alive else Server.DEAD
-        n = bytes([len(player.news) & 0xff00, len(player.news) & 0xff])
-        d = bytes([len(player.olds) & 0xff00, len(player.olds) & 0xff])
-        writer.write(a)
-        writer.write(n)
-        writer.write(d)
-        for block in player.news:
-            x = bytes([block[0] & 0xff00, block[0] & 0xff])
-            y = bytes([block[1] & 0xff00, block[1] & 0xff])
-            writer.write(x)
-            writer.write(y)
-        for block in player.olds:
-            x = bytes([block[0] & 0xff00, block[0] & 0xff])
-            y = bytes([block[1] & 0xff00, block[1] & 0xff])
-            writer.write(x)
-            writer.write(y)
+    def engine_info(self):
+        data = json.dumps(self.engine.info).encode('ascii')  # move to snekpi?
+        data_len = len(data).to_bytes(2, 'big')
+        return data_len + data
+
+    def get_state_current(self, hash_id):
+        player_snek = snekpi.BaseSnek
+        if hash_id in self.players:
+            player_snek = self.players[hash_id].snek
+        sneks, stuff = self.engine.all_objects
+        res = b''
+
+        res += snekpi.encode_whole_object(player_snek)
+        res += (len(sneks) - 1 if player_snek in sneks else len(sneks)).to_bytes(4, 'big')  # ugly?\
+        for snek in sneks:
+            if snek is not player_snek:
+                res += snekpi.encode_whole_object(snek)
+
+        for kind in stuff:
+            res += len(kind).to_bytes(4, 'big')
+            for snek_object in kind:
+                res += snekpi.encode_whole_object(snek_object)
+
+        return res
+
+    def get_state_updated(self, hash_id):
+        raise NotImplementedError
+
+    def get_state_current_old(self, hash_id):
+        raise NotImplementedError
+
+    def get_state_updated_old(self, hash_id):
+        raise NotImplementedError
+
+    async def dispatch(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        c = (await reader.readexactly(1))[0]
+        _args = await reader.read()  # is it safe to read any amount of bytes?
+
+        args = self.decode(c, _args)
+        answer = self.cases[c](*args)
+
+        writer.write(answer)
         await writer.drain()
 
-        player.news = set()
-        player.olds = set()
-        player.last = time.time()
+        # update staff abut player (e.g. last, ...)
+
         writer.close()
         await writer.wait_closed()
 
 
-if __name__ == '__main__':
+def main():
     engine = PacManSnekEngine(width=20, height=20, max_food=2, game_tick=0.2)
     server = Server(address=('', 12345), engine=engine)
     server.run()
+
+
+if __name__ == '__main__':
+    main()

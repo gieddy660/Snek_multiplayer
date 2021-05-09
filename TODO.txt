@@ -1,7 +1,6 @@
 Each player is represented by:
-    - hash id
-    - name (optional)
-    note: hash id a must be unique
+    - hash id (8 bytes)
+    note: hash id must be unique
 
 
 Flow of the game:
@@ -25,22 +24,22 @@ Client message format:
     | 0 (| name as UTF-8 string )|
 
 1 ->
-    | 1 | play id hash | direction |
+    | 1 | player hash id | direction |
 
 2 ->
     | 2 |
 
 3 ->
-    | 3 (| play id hash )|
+    | 3 (| player hash id )|  (see note 2)
 
 4 ->
-    | 4 | play id hash |
+    | 4 | player hash id |
 
 254 ->
-    |254(| play id hash )|
+    |254(| player hash id )|  (see note 2)
 
 255 ->
-    |255| play id hash |
+    |255| player hash id |
 
 
 
@@ -54,16 +53,18 @@ Server answer:
 
 
 2 -> sends to the player game settings info:
-    - id of game mode (1 byte)
-        (es -> 0: normal; 1: pacman; ... )
-    - game height (2 bytes)
-    - game width (2 bytes)
+    - length of json_string (2 bytes)
+    - data (json) (ascii) (up to 65535 bytes) (see note 5)
+        (es: mode, length)
 
 
 3 -> sends to player game state info:
     player:
         - alive (1 byte)
-        (- data (es: name, length)) (variable length)
+        data:
+            - length of json_string (2 bytes)
+            - data (json) (ascii) (up to 65535 bytes) (see note 5)
+                (es: name, length)
         - number of blocks (4 bytes)
         - 0 (4 bytes)
         for each block:
@@ -73,7 +74,10 @@ Server answer:
     - number of sneks (see note (3))
     for each snek (both deleted and new):
         - 1 (1 byte)
-        (- data) (variable length)
+        data:
+            - length of json_string (2 bytes)
+            - data (json) (ascii) (up to 65535 bytes) (see note 5)
+                (es: name, length)
         - number of blocks in order (4 bytes)
         - 0 (4 bytes)
         for each block:
@@ -84,7 +88,10 @@ Server answer:
         - number of snek like objects (see note (3))
         for each snek like object (both deleted and new)
             - 1 (1 byte)
-            (- data) (variable length)
+            data:
+                - length of json_string (2 bytes)
+                - data (json) (ascii) (up to 65535 bytes) (see note 5)
+                    (es: name, length)
             - number of new blocks (4 bytes)
             - 0 (4 bytes)
             for each block:
@@ -96,7 +103,10 @@ Server answer:
 4 -> sends to player updates to the state of the game since last request:
     player:
         - alive (1 byte)
-        (- data (es. name, length)) (variable length)
+        data:
+            - length of json_string (2 bytes)
+            - data (json) (ascii) (up to 65535 bytes) (see note 5)
+                (es: name, length)
         - number of new blocks (4 bytes)
         - number of old blocks (4 bytes)
         for each block:
@@ -106,7 +116,10 @@ Server answer:
     - number of sneks (both dead or alive, old and new, see note (4))
     for each snek (both deleted and new):
         - alive (1 byte)
-        (- data) (variable length)
+        data:
+            - length of json_string (2 bytes)
+            - data (json) (ascii) (up to 65535 bytes) (see note 5)
+                (es: name, length)
         - number of new blocks in order (4 bytes)
         - number of old blocks in order (4 bytes)
         for each block:
@@ -117,7 +130,10 @@ Server answer:
         - number of snek like objects (both dead or alive, old and new, see note (4))
         for each snek like object (both deleted and new)
             - alive (1 byte)
-            (- data) (variable length)
+            data:
+                - length of json_string (2 bytes)
+                - data (json) (ascii) (up to 65535 bytes) (see note 5)
+                    (es: name, length)- data (json) (variable length)
             - number of new blocks (4 bytes)
             - number of old blocks (4 bytes)
             for each block:
@@ -126,17 +142,17 @@ Server answer:
     (it's sent like this so that it can be treated as a snek)
 
 
-254 -> sends current state in old mode, meaning it only sends old and new blocks and if the player is alive:
+254 -> sends current state in old mode, meaning it only sends blocks and if the player is alive:
     - alive (1 byte)
 
-    - number of new blocks (4 bytes)
+    - number of blocks (4 bytes)
     - 0 (4 bytes)
     for each block:
         - x coordinate (2 bytes)
         - y coordinate (2 bytes)
 
 
-255 -> like 3 but doesn't distinguish between different sneks and food:
+255 -> sends updated state in of the game in old mode, meaning it only sends old and new blocks and if the player is alive:
     - alive (1 byte)
 
     - number of new blocks (4 bytes)
@@ -148,17 +164,18 @@ Server answer:
 Notes:
 (1) All numbers are big endian.
 
-(2) for commands 3 and 254 hash id of a player is optional. If not given # TODO: (but something like "it sends a dummy player rather than a new one")
+(2) For commands 3 and 254 hash id of a player is optional. If not given the server sends a dummy player
+    that should be ignored.
 
 (3) Differently to command 4 the only objects to be sent are the ones alive right now, so if an object
     dies between two adjacent messages the server doesn't communicate it directly. Therefore the client
-    should discard current state of the game every time it uses command this command.
+    should discard current state of the game every time it uses this command.
     es:
     message 1: A B C
     meanwhile B dies and D joins
     message 2: A C D
-    (note that the server doesn't directly communicate identity of an object so the client can't know
-    directly that the second object sent is now C rather than B)
+    (note that the server doesn't directly communicate identity of an object so the client can't effectively
+    know that the second object sent is now C rather than B)
 
 (4) Objects of each type are sent in order, so that the first object sent in two following messages is
     the same object, and the same applies for the second, third, ans so on. If an object is to be deleted
@@ -170,6 +187,8 @@ Notes:
     message 3: A B.dead C D
     message 4: A C D
 
+(5) While data is sent as ascii, the strings it contains may contain unicode. Unicode characters are escaped
+    with \x \u or \U  (see python ascii builtin function or json.dump function).
 
 TODO: implement new communication in server
 TODO: implement new communication in client
