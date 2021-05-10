@@ -37,7 +37,7 @@ class Snek(snekpi.BaseSnek):
             return self.future_head + self.head + self.body
 
     def move(self):
-        res = (self.future_head, ()) if self.will_grow else (self.future_head, self.tail)
+        res = ((self.future_head,), ()) if self.will_grow else ((self.future_head,), (self.tail,))
         super().move()
         self.will_grow = False
         return res
@@ -98,25 +98,21 @@ class SnekEngine:
 
     @property
     def all_objects(self):
-        # sneks = {}
-        # foods = {}
-        # for snek in self.sneks:
-        #     sneks[snek] = snek.whole
-        # for food in self.foods:
-        #     foods[food] = food.whole  # maybe we could use something other than a dict
-        return self.sneks, (self.foods,)
+        return self.sneks, {Food: self.foods}
 
     def move(self):
-        new_foods = []
-        new_blocks = {}
-        old_blocks = {}
+        # 0: news, 1: olds
+        sneks = {}
+        foods = {}
+        new_foods = {}
 
         # kill sneks
         keep_sneks = []
         for s1 in self.sneks:
+            sneks[s1] = [[], []]
             if not self.snek_within(s1) or any((s1 >> s2 for s2 in self.sneks)) or not s1.alive:
                 s1.kill()
-                old_blocks[s1] = s1.whole
+                sneks[s1][1] += s1.whole
             else:
                 keep_sneks.append(s1)
         self.sneks = keep_sneks
@@ -124,11 +120,12 @@ class SnekEngine:
         # eat food
         keep_foods = []
         for food in self.foods:
+            foods[food] = [[], []]
             for s1 in self.sneks:
                 if s1 >> food:
-                    food.kill()
                     s1.will_grow = True
-                    old_blocks[food] = food.whole
+                    food.kill()
+                    foods[food][1] += food.whole
                     break
             else:
                 keep_foods.append(food)
@@ -136,18 +133,17 @@ class SnekEngine:
 
         # move sneks
         for snek in self.sneks:
-            new, old = snek.move()
-            new_blocks[snek] = new
-            old_blocks[snek] = old
+            news, olds = snek.move()
+            sneks[snek][0] += news
+            sneks[snek][1] += olds
 
         # create food
         if len(self.foods) < self.target_food:
             food = self.create_food()
             if food is not None:
-                new_foods.append(food)
-                new_blocks[food] = food.whole
+                new_foods[food] = [food.whole, []]
 
-        return new_foods, new_blocks, old_blocks
+        return sneks, (), {Food: foods}, {Food: new_foods}
 
     def create_snek(self, *args, **kwargs):
         t = []
@@ -197,9 +193,9 @@ class Server:
     DIR_MESSAGE_SIZE = 1
     DEAD, ALIVE = b'\x00', b'\x01'
     DIRECTION = {b'\x01': 'u', b'\x02': 'l', b'\x03': 'd', b'\x04': 'r', b'\x05': 'lol'}
-    KICK_TIME = 10
+    KILL_TIME = 10
 
-    Player = make_dataclass('Player', [('snek', snekpi.BaseSnek), ('last', float)])
+    Player = make_dataclass('Player', [('snek', snekpi.BaseSnek), ('sneks', dict), ('kinds', dict), ('last', float)])
 
     def __init__(self, address, engine, max_connections=5):
         self.address = address
@@ -218,20 +214,31 @@ class Server:
                                             backlog=self.max_connections)
         async with server:
             await server.start_serving()  # DEBUG: seems like it's working, but keep under control
-            async for news, olds in self.engine.loop():  # TODO: restructure completely
-                new_players = {}
+            async for sneks, new_sneks, kinds, new_of_kinds in self.engine.loop():  # TODO: restructure completely
+                keep_players = {}
                 for hash_id, player in self.players.items():
-                    player.news |= news
-                    player.olds |= olds
-                    player.news -= olds
-                    player.olds -= news
-                    if time.time() - player.last > Server.KICK_TIME:
+                    for snek in sneks:
+                        player.sneks[snek][0] += snek[0]
+                        player.sneks[snek][1] += snek[1]
+                    player.sneks.update(new_sneks)
+                    for kind, elements in kinds.items():
+                        for element in elements:
+                            player.kinds[kind][0] += element[0]
+                            player.kinds[kind][1] += element[1]
+                    for kind, new_elements in new_of_kinds.items():
+                        player.kinds[kind].update(new_elements)
+
+                    if time.time() - player.last > Server.KILL_TIME:
                         player.snek.kill()
                     else:
-                        new_players[hash_id] = player
+                        keep_players[hash_id] = player
+
+                server.players = keep_players
+
+    # TODO: add exception handling
 
     @classmethod
-    def decode(cls, c, args):  # TODO: add exception handling
+    def decode(cls, c, args):
         if c == 0:
             return args.decode('utf8'),
         elif c == 1:
@@ -248,18 +255,19 @@ class Server:
             return args,
         raise LookupError(f'invalid command: {c}')
 
-    def register(self, name):  # TODO: rework for new self.player
+    def register(self, name):  # TODO: add max connections
         hash_id = random.getrandbits(64).to_bytes(8, 'big')
         if hash_id in self.players:
             return
         snek = self.engine.create_snek(name=name)
-        player = Server.Player(snek, time.time())
+        sneks, kinds = self.engine.all_objects()
+        player = Server.Player(snek, sneks, kinds, time.time())
         self.players[hash_id] = player
         return hash_id
 
     def set_dir(self, hash_id, direction):  # add exception handling
         player = self.players[hash_id]
-        player.dir = direction
+        player.snek.dir = direction
         return b'\x00'
 
     def engine_info(self):
@@ -268,33 +276,74 @@ class Server:
         return data_len + data
 
     def get_state_current(self, hash_id):
-        player_snek = snekpi.BaseSnek
-        if hash_id in self.players:
+        player_snek = snekpi.BaseSnek()
+        if hash_id:
             player_snek = self.players[hash_id].snek
-        sneks, stuff = self.engine.all_objects
+        sneks, kinds = self.engine.all_objects
         res = b''
 
         res += snekpi.encode_whole_object(player_snek)
-        res += (len(sneks) - 1 if player_snek in sneks else len(sneks)).to_bytes(4, 'big')  # ugly?\
+        res += (len(sneks) - 1 if player_snek in sneks else len(sneks)).to_bytes(4, 'big')  # ugly?
         for snek in sneks:
             if snek is not player_snek:
                 res += snekpi.encode_whole_object(snek)
 
-        for kind in stuff:
+        for kind, elements in kinds.items():
             res += len(kind).to_bytes(4, 'big')
-            for snek_object in kind:
-                res += snekpi.encode_whole_object(snek_object)
+            for element in elements:
+                res += snekpi.encode_whole_object(element)
 
         return res
 
     def get_state_updated(self, hash_id):
-        raise NotImplementedError
+        player_snek = self.players[hash_id].snek
+        sneks = self.players[hash_id].sneks
+        kinds = self.players[hash_id].kinds
+        res = b''
+
+        res += snekpi.encode_partial_object(player_snek, sneks[player_snek][0], sneks[player_snek][1])
+        res += (len(sneks) - 1).to_bytes(4, 'big')
+        for snek, (news, olds) in sneks.items():
+            if snek is not player_snek:
+                res += snekpi.encode_partial_object(snek, news, olds)
+
+        for kind, elements in kinds.items():
+            res += len(kind).to_bytes(4, 'big')
+            for element, (news, olds) in elements:
+                res += snekpi.encode_partial_object(element, news, olds)
+
+        return res
 
     def get_state_current_old(self, hash_id):
-        raise NotImplementedError
+        alive = False
+        if hash_id:
+            alive = self.players[hash_id].snek.alive
+        blocks = self.engine.all_blocks
+        res = b''
 
-    def get_state_updated_old(self, hash_id):
-        raise NotImplementedError
+        res += alive.to_bytes(1, 'big')
+        res += snekpi.encode_blocks(blocks, [])
+
+        return res
+
+    def get_state_updated_old(self, hash_id):  # news and olds might contain repeated elements, is that a problem?
+        player = self.players[hash_id]
+        alive = player.snek.alive
+        news = []
+        olds = []
+        for news_, olds_ in player.sneks.values():
+            news += news_
+            olds += olds_
+        for elements in player.kinds.values():
+            for news_, olds_ in elements.values():
+                news += news_
+                olds += olds_
+        res = b''
+
+        res += alive.to_bytes(1, 'big')
+        res += snekpi.encode_blocks(news, olds)
+
+        return res
 
     async def dispatch(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         c = (await reader.readexactly(1))[0]
@@ -306,7 +355,11 @@ class Server:
         writer.write(answer)
         await writer.drain()
 
-        # update staff abut player (e.g. last, ...)
+        # TODO: update staff abut player (e.g. last, ...)
+        if c in (3, 4, 254, 255):
+            pass
+            # reset sneks, and kinds of the player; also maybe do this inside the functions themselves
+        # set player last to time.time()
 
         writer.close()
         await writer.wait_closed()

@@ -162,7 +162,7 @@ Server answer:
         - y coordinate (2 bytes)
 
 Notes:
-(1) All numbers are big endian.
+(1) All numbers are unsigned integers, sent as big endian.
 
 (2) For commands 3 and 254 hash id of a player is optional. If not given the server sends a dummy player
     that should be ignored.
