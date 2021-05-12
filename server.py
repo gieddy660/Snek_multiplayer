@@ -30,14 +30,14 @@ class Snek(snekpi.BaseSnek):
         return t
 
     @property
-    def future_body(self):
+    def future_whole(self):
         if self.will_grow:
             return self.future_head + self.whole
         else:
             return self.future_head + self.head + self.body
 
     def move(self):
-        res = ((self.future_head,), ()) if self.will_grow else ((self.future_head,), (self.tail,))
+        res = (self.future_head, []) if self.will_grow else (self.future_head, self.tail)
         super().move()
         self.will_grow = False
         return res
@@ -49,8 +49,8 @@ class Snek(snekpi.BaseSnek):
 
 
 class PacManSnek(Snek):
-    def __init__(self, dimensions, direction='u', pos=(0, 0)):
-        super().__init__(direction, pos)
+    def __init__(self, dimensions, direction='u', pos=(0, 0), name=''):
+        super().__init__(direction, pos, name)
         self.dimensions = dimensions
 
     @property
@@ -143,7 +143,7 @@ class SnekEngine:
             if food is not None:
                 new_foods[food] = [food.whole, []]
 
-        return sneks, (), {Food: foods}, {Food: new_foods}
+        return sneks, {}, {Food: foods}, {Food: new_foods}
 
     def create_snek(self, *args, **kwargs):
         t = []
@@ -189,11 +189,8 @@ class PacManSnekEngine(SnekEngine):
 
 
 class Server:
-    PLAYER_HASH_SIZE = 8
-    DIR_MESSAGE_SIZE = 1
-    DEAD, ALIVE = b'\x00', b'\x01'
     DIRECTION = {b'\x01': 'u', b'\x02': 'l', b'\x03': 'd', b'\x04': 'r', b'\x05': 'lol'}
-    KILL_TIME = 10
+    KILL_TIME = 60
 
     Player = make_dataclass('Player', [('snek', snekpi.BaseSnek), ('sneks', dict), ('kinds', dict), ('last', float)])
 
@@ -214,59 +211,71 @@ class Server:
                                             backlog=self.max_connections)
         async with server:
             await server.start_serving()  # DEBUG: seems like it's working, but keep under control
-            async for sneks, new_sneks, kinds, new_of_kinds in self.engine.loop():  # TODO: restructure completely
-                keep_players = {}
+            async for sneks, new_sneks, kinds, new_of_kinds in self.engine.loop():
                 for hash_id, player in self.players.items():
-                    for snek in sneks:
-                        player.sneks[snek][0] += snek[0]
-                        player.sneks[snek][1] += snek[1]
+                    print(sneks, new_sneks, kinds, new_of_kinds)
+                    print(player)
+                    for snek, (news, olds) in sneks.items():
+                        player.sneks[snek][0] += news
+                        player.sneks[snek][1] += olds
                     player.sneks.update(new_sneks)
                     for kind, elements in kinds.items():
-                        for element in elements:
-                            player.kinds[kind][0] += element[0]
-                            player.kinds[kind][1] += element[1]
+                        for element, (news, olds) in elements.items():
+                            player.kinds[kind][element][0] += news
+                            player.kinds[kind][element][1] += olds
                     for kind, new_elements in new_of_kinds.items():
                         player.kinds[kind].update(new_elements)
 
                     if time.time() - player.last > Server.KILL_TIME:
                         player.snek.kill()
-                    else:
-                        keep_players[hash_id] = player
-
-                server.players = keep_players
 
     # TODO: add exception handling
-
-    @classmethod
-    def decode(cls, c, args):
+    def decode(self, c, args):
         if c == 0:
             return args.decode('utf8'),
         elif c == 1:
-            return args[:8], cls.DIRECTION[args[8]]
+            return self.players[args[:8]], self.DIRECTION[args[8]]
         elif c == 2:
-            return args,
+            return b''
         elif c == 3:
-            return args,
+            if args:
+                return self.players[args[:8]],
+            return Server.Player(snekpi.BaseSnek(), {}, {}, 0)
         elif c == 4:
-            return args,
+            return self.players[args[:8]]
         elif c == 254:
-            return args,
+            if args:
+                return self.players[args[:8]],
+            return Server.Player(snekpi.BaseSnek(), {}, {}, 0)
         elif c == 255:
-            return args,
+            return self.players[args[:8]]
         raise LookupError(f'invalid command: {c}')
+
+    def name_to_rename(self, player):
+        sneks_, kinds_ = self.engine.all_objects
+        sneks = {}
+        kinds = {}
+        for snek in sneks_:
+            sneks[snek] = [[], []]
+        for kind, elements in kinds_.items():
+            kinds[kind] = {}
+            for element in elements:
+                kinds[kind][element] = [[], []]
+
+        player.sneks = sneks
+        player.kinds = kinds
 
     def register(self, name):  # TODO: add max connections
         hash_id = random.getrandbits(64).to_bytes(8, 'big')
         if hash_id in self.players:
             return
         snek = self.engine.create_snek(name=name)
-        sneks, kinds = self.engine.all_objects()
-        player = Server.Player(snek, sneks, kinds, time.time())
+        player = Server.Player(snek, {}, {}, time.time())
+        self.name_to_rename(player)
         self.players[hash_id] = player
         return hash_id
 
-    def set_dir(self, hash_id, direction):  # add exception handling
-        player = self.players[hash_id]
+    def set_dir(self, player, direction):  # add exception handling
         player.snek.dir = direction
         return b'\x00'
 
@@ -275,10 +284,8 @@ class Server:
         data_len = len(data).to_bytes(2, 'big')
         return data_len + data
 
-    def get_state_current(self, hash_id):
-        player_snek = snekpi.BaseSnek()
-        if hash_id:
-            player_snek = self.players[hash_id].snek
+    def get_state_current(self, player):
+        player_snek = player.snek
         sneks, kinds = self.engine.all_objects
         res = b''
 
@@ -289,16 +296,17 @@ class Server:
                 res += snekpi.encode_whole_object(snek)
 
         for kind, elements in kinds.items():
-            res += len(kind).to_bytes(4, 'big')
+            res += len(elements).to_bytes(4, 'big')
             for element in elements:
                 res += snekpi.encode_whole_object(element)
 
+        self.name_to_rename(player)
         return res
 
-    def get_state_updated(self, hash_id):
-        player_snek = self.players[hash_id].snek
-        sneks = self.players[hash_id].sneks
-        kinds = self.players[hash_id].kinds
+    def get_state_updated(self, player):
+        player_snek = player
+        sneks = player
+        kinds = player
         res = b''
 
         res += snekpi.encode_partial_object(player_snek, sneks[player_snek][0], sneks[player_snek][1])
@@ -308,26 +316,25 @@ class Server:
                 res += snekpi.encode_partial_object(snek, news, olds)
 
         for kind, elements in kinds.items():
-            res += len(kind).to_bytes(4, 'big')
-            for element, (news, olds) in elements:
+            res += len(elements).to_bytes(4, 'big')
+            for element, (news, olds) in elements:  # move to snekpi?
                 res += snekpi.encode_partial_object(element, news, olds)
 
+        self.name_to_rename(player)  # might be done inside the two loops above; if this is too slow will do other way
         return res
 
-    def get_state_current_old(self, hash_id):
-        alive = False
-        if hash_id:
-            alive = self.players[hash_id].snek.alive
+    def get_state_current_old(self, player):
+        alive = player.snek.alive
         blocks = self.engine.all_blocks
         res = b''
 
         res += alive.to_bytes(1, 'big')
         res += snekpi.encode_blocks(blocks, [])
 
+        self.name_to_rename(player)
         return res
 
-    def get_state_updated_old(self, hash_id):  # news and olds might contain repeated elements, is that a problem?
-        player = self.players[hash_id]
+    def get_state_updated_old(self, player):  # news and olds might contain repeated elements, is that a problem?
         alive = player.snek.alive
         news = []
         olds = []
@@ -343,21 +350,31 @@ class Server:
         res += alive.to_bytes(1, 'big')
         res += snekpi.encode_blocks(news, olds)
 
+        self.name_to_rename(player)
         return res
 
     async def dispatch(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        print(f'{reader} has connected')
+
         c = (await reader.readexactly(1))[0]
         _args = await reader.read()  # is it safe to read any amount of bytes?
 
+        print(c, _args)
+
         args = self.decode(c, _args)
+        print(args)
         answer = self.cases[c](*args)
 
         writer.write(answer)
         await writer.drain()
 
         # TODO: update staff abut player (e.g. last, ...)
-        if c in (3, 4, 254, 255):
-            pass
+        if args[0] in self.players:
+            if not args[0].snek.alive:
+                'remove player from self.players'
+            else:
+                self.name_to_rename(args[0])
+                args[0].last = time.time()
             # reset sneks, and kinds of the player; also maybe do this inside the functions themselves
         # set player last to time.time()
 
@@ -366,9 +383,21 @@ class Server:
 
 
 def main():
-    engine = PacManSnekEngine(width=20, height=20, max_food=2, game_tick=0.2)
+    engine = PacManSnekEngine(width=20, height=20, max_food=2, game_tick=2)
     server = Server(address=('', 12345), engine=engine)
     server.run()
+
+
+def test():
+    engine = PacManSnekEngine(20, 20, 2, 2)
+    engine.create_snek()
+    while True:
+        print(engine.all_objects)
+        # print(engine.all_blocks)
+        for snek in engine.sneks:
+            print(snek.whole)
+        engine.move()
+        time.sleep(1)
 
 
 if __name__ == '__main__':
