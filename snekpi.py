@@ -86,14 +86,27 @@ def encode_whole_list(objs):
     return encode_partial_list(((obj, obj.whole, []) for obj in objs))
 
 
-def decode_blocks(message, length):
-    res = []
-    for i in range(length):
+def decode_blocks(message):
+    new_blocks_len = int.from_bytes(message[:4], 'big')
+    old_blocks_len = int.from_bytes(message[4:8], 'big')
+    message = message[8:]
+
+    new_blocks = []
+    old_blocks = []
+
+    for i in range(new_blocks_len):
         x = int.from_bytes(message[:2], 'big')
         y = int.from_bytes(message[2:4], 'big')
         message = message[4:]
-        res.append((x, y))
-    return res
+        new_blocks.append((x, y))
+
+    for i in range(old_blocks_len):
+        x = int.from_bytes(message[:2], 'big')
+        y = int.from_bytes(message[2:4], 'big')
+        message = message[4:]
+        old_blocks.append((x, y))
+
+    return new_blocks, old_blocks, message
 
 
 def decode_object(message):
@@ -104,15 +117,7 @@ def decode_object(message):
     data = json.loads(message[2:data_len + 2].decode('ascii'))
     message = message[data_len + 2:]
 
-    new_blocks_len = int.from_bytes(message[:4], 'big')
-    old_blocks_len = int.from_bytes(message[4:8], 'big')
-    message = message[8:]
-
-    new_blocks = decode_blocks(message, new_blocks_len)
-    message = message[new_blocks_len * 4:]
-
-    old_blocks = decode_blocks(message, old_blocks_len)
-    message = message[old_blocks_len * 4:]
+    new_blocks, old_blocks, message = decode_blocks(message)
 
     return (alive, data, new_blocks, old_blocks), message
 
