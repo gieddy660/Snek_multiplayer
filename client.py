@@ -1,13 +1,17 @@
 import asyncio
-import keyboard
 import sys
-import random
+
+import keyboard
+
+import aiosnek
 
 DIRECTION = {'u': b'\x01', 'l': b'\x02', 'd': b'\x03', 'r': b'\x04', 'lol': b'\x05'}
 
 A_MESSAGE_SIZE = 1
 N_MESSAGE_SIZE = D_MESSAGE_SIZE = 2
 X_MESSAGE_SIZE = Y_MESSAGE_SIZE = 2
+
+direction: str
 
 
 async def gather_keyboard():
@@ -27,7 +31,19 @@ async def gather_keyboard():
         await asyncio.sleep(0.003)
 
 
-def draw_screen(news, olds):  # TODO: imporove
+def draw_screen_whole(blocks):  # TODO: improve
+    global grid
+    grid = [[' ' for x in range(20)] for y in range(20)]
+    for x, y in blocks:
+        grid[y][x] = 1
+
+    for row in grid:
+        for cell in row:
+            print('{} '.format(cell), end='')
+        print()
+
+
+def draw_screen_partial(news, olds):  # TODO: improve
     global grid
     for x, y in olds:
         grid[y][x] = ' '
@@ -40,54 +56,27 @@ def draw_screen(news, olds):  # TODO: imporove
         print()
 
 
-async def handle_connection(id_hash, host, port):
+async def handle_connection(host, port):
+    hash_id = await aiosnek.register(host, port)
+    await asyncio.sleep(0.01)
+
     while 1:
-        reader, writer = await asyncio.open_connection(host, port)
-        writer.write(id_hash)
-        writer.write(DIRECTION[direction])
-        await writer.drain()
-        try:
-            a_ = await reader.readexactly(A_MESSAGE_SIZE)
-            n_ = await reader.readexactly(N_MESSAGE_SIZE)
-            d_ = await reader.readexactly(D_MESSAGE_SIZE)
+        await aiosnek.set_dir(host, port, hash_id, DIRECTION[direction])
+        await asyncio.sleep(0.01)
 
-            a = True if a_ == b'\x01' else False
-            n = (n_[0] << 8) + n_[1]
-            d = (d_[0] << 8) + d_[1]
-            if not a:
-                sys.exit()
+        alive, new_blocks, old_blocks = await aiosnek.get_current_blocks(host, port, hash_id)
 
-            news = []
-            for _ in range(n):
-                x_ = await reader.readexactly(X_MESSAGE_SIZE)
-                y_ = await reader.readexactly(Y_MESSAGE_SIZE)
-                x = (x_[0] << 8) + x_[1]
-                y = (y_[0] << 8) + y_[1]
-                news.append((x, y))
+        if not alive:
+            sys.exit()
 
-            olds = []
-            for _ in range(d):
-                x_ = await reader.readexactly(X_MESSAGE_SIZE)
-                y_ = await reader.readexactly(Y_MESSAGE_SIZE)
-                x = (x_[0] << 8) + x_[1]
-                y = (y_[0] << 8) + y_[1]
-                olds.append((x, y))
-
-            draw_screen(news, olds)
-        except asyncio.IncompleteReadError:
-            print("can't communicate with the server")
-        finally:
-            writer.close()
-            await writer.wait_closed()
-            await asyncio.sleep(0.01)
+        draw_screen_whole(new_blocks)
 
 
 async def main():
-    id_hash = (random.getrandbits(64)).to_bytes(8, 'big')
     host = 'localhost'
     port = 12345
-    print(id_hash, host, port)
-    await asyncio.gather(handle_connection(id_hash, host, port), gather_keyboard())
+    print(host, port)
+    await asyncio.gather(handle_connection(host, port), gather_keyboard())
 
 if __name__ == '__main__':
     grid = [[' ' for x in range(20)] for y in range(20)]
