@@ -1,18 +1,18 @@
 # Snek_multiplayer
 Multiplayer snake game written in python
 
-###Communication between server and client
+### Communication between server and client
 
 Each player is represented by: <br>
 **hash_id** (8 bytes) <br>
 note: **hash_id** must be unique
 
-####Flow of the game:
+#### Flow of the game:
 1. player registers to the server
 2. player sends commands and queries to the server to get status and set data about itself
 3. player dies
 
-####Commands:
+#### Commands:
     0 -> register to server
     1 -> set direction
     2 -> get game info
@@ -22,7 +22,7 @@ note: **hash_id** must be unique
     255 -> get updated state (old mode)
 
 
-####Client message format:
+#### Client message format:
     0 -> 
         | 0 (| name as UTF-8 string )|
     
@@ -46,7 +46,7 @@ note: **hash_id** must be unique
 
 
 
-####Server answer format:
+#### Server answer format:
     0 -> register player to server:
         player hash_id (8 bytes)
     
@@ -164,7 +164,7 @@ note: **hash_id** must be unique
             - x coordinate (2 bytes)
             - y coordinate (2 bytes)
 
-######Notes:
+###### Notes:
 1.  All numbers are **unsigned integers**, sent as **big endian**.
 
 2.  For commands *3* and *254* **hash_id** of a player is optional. If not given, the server sends a dummy player
