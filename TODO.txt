@@ -1,2 +1,0 @@
-TODO: improve new communication in server
-TODO: implement new communication in client
