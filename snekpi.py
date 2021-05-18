@@ -37,6 +37,9 @@ class BaseSnek:
     def kill(self):
         self.alive = False
 
+    def __repr__(self):
+        return f"$data:{self.data}, whole:{self.whole}$"
+
 
 def get_object_metadata(snek_like_object):
     alive = int(snek_like_object.alive).to_bytes(1, 'big')
@@ -60,16 +63,27 @@ def encode_blocks(new_blocks, old_blocks):
     return res
 
 
-def encode_whole_object(snek_like_object):
-    res = get_object_metadata(snek_like_object)
-    res += encode_blocks(snek_like_object.whole, [])
-    return res
-
-
 def encode_partial_object(snek_like_object, new_blocks, old_blocks):
     res = get_object_metadata(snek_like_object)
     res += encode_blocks(new_blocks, old_blocks)
-    return bytes()
+    return res
+
+
+def encode_whole_object(snek_like_object):
+    return encode_partial_object(snek_like_object, snek_like_object.whole, [])
+
+
+def encode_partial_list(obj_news_olds):
+    res = b''
+    obj_len = 0
+    for snek_like_object, news, olds in obj_news_olds:
+        res += encode_partial_object(snek_like_object, news, olds)
+        obj_len += 1
+    return obj_len.to_bytes(4, 'big') + res
+
+
+def encode_whole_list(objs):
+    return encode_partial_list(((obj, obj.whole, []) for obj in objs))
 
 
 def decode_blocks(message, length):
@@ -94,9 +108,35 @@ def decode_object(message):
     old_blocks_len = int.from_bytes(message[4:8], 'big')
     message = message[8:]
 
-    message_n = message[:new_blocks_len * 4]
-    message_o = message[new_blocks_len * 4:]
-    new_blocks = decode_blocks(message_n, new_blocks_len)
-    old_blocks = decode_blocks(message_o, old_blocks_len)
+    new_blocks = decode_blocks(message, new_blocks_len)
+    message = message[new_blocks_len * 4:]
 
-    return alive, data, new_blocks, old_blocks
+    old_blocks = decode_blocks(message, old_blocks_len)
+    message = message[old_blocks_len * 4:]
+
+    return (alive, data, new_blocks, old_blocks), message
+
+
+def decode_list(message):
+    snek_like_object_len = int.from_bytes(message[:4], 'big')
+    message = message[4:]
+
+    snek_like_objects = []
+    for i in range(snek_like_object_len):
+        snek_like_object, message = decode_object(message)
+        snek_like_objects.append(snek_like_object)
+
+    return snek_like_objects, message
+
+
+def decode_message(message):
+    player, message = decode_object(message)
+
+    sneks, message = decode_list(message)
+
+    kinds = []
+    while message:
+        sneks_like_objects, message = decode_list(message)
+        kinds.append(sneks_like_objects)
+
+    return player, sneks, kinds

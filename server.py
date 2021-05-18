@@ -191,6 +191,7 @@ class PacManSnekEngine(SnekEngine):
 class Server:
     DIRECTION = {b'\x01': 'u', b'\x02': 'l', b'\x03': 'd', b'\x04': 'r', b'\x05': 'lol'}
     KILL_TIME = 60
+    KICK_TIME = KILL_TIME + 10
 
     Player = make_dataclass('Player', [('snek', snekpi.BaseSnek), ('sneks', dict), ('kinds', dict), ('last', float)])
 
@@ -212,9 +213,10 @@ class Server:
         async with server:
             await server.start_serving()  # DEBUG: seems like it's working, but keep under control
             async for sneks, new_sneks, kinds, new_of_kinds in self.engine.loop():
+                keep_players = {}
                 for hash_id, player in self.players.items():
                     print(sneks, new_sneks, kinds, new_of_kinds)
-                    print(player)
+                    print(self.players)
                     for snek, (news, olds) in sneks.items():
                         player.sneks[snek][0] += news
                         player.sneks[snek][1] += olds
@@ -229,26 +231,30 @@ class Server:
                     if time.time() - player.last > Server.KILL_TIME:
                         player.snek.kill()
 
+                    if time.time() - player.last < Server.KICK_TIME:
+                        keep_players[hash_id] = player
+                self.players = keep_players
+
     # TODO: add exception handling
     def decode(self, c, args):
         if c == 0:
             return args.decode('utf8'),
         elif c == 1:
-            return self.players[args[:8]], self.DIRECTION[args[8]]
+            return self.players[args[:8]], self.DIRECTION[args[8:9]]
         elif c == 2:
-            return b''
+            return ()
         elif c == 3:
             if args:
                 return self.players[args[:8]],
-            return Server.Player(snekpi.BaseSnek(), {}, {}, 0)
+            return Server.Player(snekpi.BaseSnek(), {}, {}, 0),
         elif c == 4:
-            return self.players[args[:8]]
+            return self.players[args[:8]],
         elif c == 254:
             if args:
                 return self.players[args[:8]],
-            return Server.Player(snekpi.BaseSnek(), {}, {}, 0)
+            return Server.Player(snekpi.BaseSnek(), {}, {}, 0),
         elif c == 255:
-            return self.players[args[:8]]
+            return self.players[args[:8]],
         raise LookupError(f'invalid command: {c}')
 
     def name_to_rename(self, player):
@@ -270,12 +276,15 @@ class Server:
         if hash_id in self.players:
             return
         snek = self.engine.create_snek(name=name)
+        for player in self.players.values():
+            player.sneks[snek] = [[], []]
         player = Server.Player(snek, {}, {}, time.time())
         self.name_to_rename(player)
         self.players[hash_id] = player
         return hash_id
 
-    def set_dir(self, player, direction):  # add exception handling
+    @staticmethod
+    def set_dir(player, direction):  # add exception handling
         player.snek.dir = direction
         return b'\x00'
 
@@ -290,37 +299,28 @@ class Server:
         res = b''
 
         res += snekpi.encode_whole_object(player_snek)
-        res += (len(sneks) - 1 if player_snek in sneks else len(sneks)).to_bytes(4, 'big')  # ugly?
-        for snek in sneks:
-            if snek is not player_snek:
-                res += snekpi.encode_whole_object(snek)
 
-        for kind, elements in kinds.items():
-            res += len(elements).to_bytes(4, 'big')
-            for element in elements:
-                res += snekpi.encode_whole_object(element)
+        res += snekpi.encode_whole_list((snek for snek in sneks if snek is not player_snek))
 
-        self.name_to_rename(player)
+        for elements in kinds.values():
+            res += snekpi.encode_whole_list(elements)
+
         return res
 
-    def get_state_updated(self, player):
+    @staticmethod
+    def get_state_updated(player):
         player_snek = player
         sneks = player
         kinds = player
         res = b''
 
         res += snekpi.encode_partial_object(player_snek, sneks[player_snek][0], sneks[player_snek][1])
-        res += (len(sneks) - 1).to_bytes(4, 'big')
-        for snek, (news, olds) in sneks.items():
-            if snek is not player_snek:
-                res += snekpi.encode_partial_object(snek, news, olds)
 
-        for kind, elements in kinds.items():
-            res += len(elements).to_bytes(4, 'big')
-            for element, (news, olds) in elements:  # move to snekpi?
-                res += snekpi.encode_partial_object(element, news, olds)
+        res += snekpi.encode_partial_list(((snek, news, olds) for snek, (news, olds) in sneks.items()))
 
-        self.name_to_rename(player)  # might be done inside the two loops above; if this is too slow will do other way
+        for elements in kinds.values():
+            res += snekpi.encode_partial_list((element, news, olds) for element, (news, olds) in elements.items())
+
         return res
 
     def get_state_current_old(self, player):
@@ -331,10 +331,10 @@ class Server:
         res += alive.to_bytes(1, 'big')
         res += snekpi.encode_blocks(blocks, [])
 
-        self.name_to_rename(player)
         return res
 
-    def get_state_updated_old(self, player):  # news and olds might contain repeated elements, is that a problem?
+    @staticmethod
+    def get_state_updated_old(player):  # news and olds might contain repeated elements, is that a problem?
         alive = player.snek.alive
         news = []
         olds = []
@@ -350,40 +350,34 @@ class Server:
         res += alive.to_bytes(1, 'big')
         res += snekpi.encode_blocks(news, olds)
 
-        self.name_to_rename(player)
         return res
 
     async def dispatch(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-        print(f'{reader} has connected')
-
         c = (await reader.readexactly(1))[0]
         _args = await reader.read()  # is it safe to read any amount of bytes?
 
-        print(c, _args)
-
         args = self.decode(c, _args)
-        print(args)
         answer = self.cases[c](*args)
 
         writer.write(answer)
         await writer.drain()
 
-        # TODO: update staff abut player (e.g. last, ...)
-        if args[0] in self.players:
-            if not args[0].snek.alive:
-                'remove player from self.players'
-            else:
-                self.name_to_rename(args[0])
-                args[0].last = time.time()
-            # reset sneks, and kinds of the player; also maybe do this inside the functions themselves
-        # set player last to time.time()
+        # cleanup for the player (e.g. last, ...)
+        if c in {3, 4, 254, 255}:
+            self.name_to_rename(args[0])
+
+        if c in {1, 3, 4, 254, 255}:
+            args[0].last = time.time()
+
+        if isinstance(args[0], snekpi.BaseSnek) and not args[0].alive:
+            del self.players[_args[:8]]
 
         writer.close()
         await writer.wait_closed()
 
 
 def main():
-    engine = PacManSnekEngine(width=20, height=20, max_food=2, game_tick=2)
+    engine = PacManSnekEngine(width=20, height=20, max_food=2, game_tick=0.2)
     server = Server(address=('', 12345), engine=engine)
     server.run()
 
