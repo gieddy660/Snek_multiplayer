@@ -65,8 +65,6 @@ class Food(snekpi.BaseSnek):
         whole = [pos]
         super().__init__(whole=whole)
 
-# TODO: testing
-
 
 class SnekEngine:
     _snek_factory = Snek
@@ -185,12 +183,10 @@ class PacManSnekEngine(SnekEngine):
         super().__init__(width, height, max_food, game_tick, sneks, foods)
         self._snek_factory = partial(self._snek_factory, dimensions=(width, height))  # ugly?
 
-# TODO: testing
-
 
 class Server:
     DIRECTION = {b'\x01': 'u', b'\x02': 'l', b'\x03': 'd', b'\x04': 'r', b'\x05': 'lol'}
-    KILL_TIME = 60
+    KILL_TIME = 10
     KICK_TIME = KILL_TIME + 10
 
     Player = make_dataclass('Player', [('snek', snekpi.BaseSnek), ('sneks', dict), ('kinds', dict), ('last', float)])
@@ -208,32 +204,45 @@ class Server:
         asyncio.run(self.loop())
 
     async def loop(self):
+        await asyncio.gather(self.server_loop(), self.game_loop(), self.interface_loop())
+
+    # TODO improve UI
+    async def interface_loop(self):
+        while 1:
+            print('-----------------------------------------------------')
+            for hash_id, player in self.players.items():
+                snek = player.snek
+                print(f"{hash_id}: '{snek.data['name']}'.{'alive' if snek.alive else 'dead'}"
+                      f", seen last time {time.time() - player.last} seconds ago")
+            await asyncio.sleep(2)
+
+    async def server_loop(self):
         server = await asyncio.start_server(self.dispatch, self.address[0], self.address[1],
                                             backlog=self.max_connections)
         async with server:
-            await server.start_serving()  # DEBUG: seems like it's working, but keep under control
-            async for sneks, new_sneks, kinds, new_of_kinds in self.engine.loop():
-                keep_players = {}
-                for hash_id, player in self.players.items():
-                    print(sneks, new_sneks, kinds, new_of_kinds)
-                    print(self.players)
-                    for snek, (news, olds) in sneks.items():
-                        player.sneks[snek][0] += news
-                        player.sneks[snek][1] += olds
-                    player.sneks.update(new_sneks)
-                    for kind, elements in kinds.items():
-                        for element, (news, olds) in elements.items():
-                            player.kinds[kind][element][0] += news
-                            player.kinds[kind][element][1] += olds
-                    for kind, new_elements in new_of_kinds.items():
-                        player.kinds[kind].update(new_elements)
+            await server.serve_forever()
 
-                    if time.time() - player.last > Server.KILL_TIME:
-                        player.snek.kill()
+    async def game_loop(self):
+        async for sneks, new_sneks, kinds, new_of_kinds in self.engine.loop():
+            keep_players = {}
+            for hash_id, player in self.players.items():
+                for snek, (news, olds) in sneks.items():
+                    player.sneks[snek][0] += news
+                    player.sneks[snek][1] += olds
+                player.sneks.update(new_sneks)
+                for kind, elements in kinds.items():
+                    for element, (news, olds) in elements.items():
+                        player.kinds[kind][element][0] += news
+                        player.kinds[kind][element][1] += olds
+                for kind, new_elements in new_of_kinds.items():
+                    player.kinds[kind].update(new_elements)
 
-                    if time.time() - player.last < Server.KICK_TIME:
-                        keep_players[hash_id] = player
-                self.players = keep_players
+                if time.time() - player.last > Server.KILL_TIME:
+                    player.snek.kill()
+
+                if time.time() - player.last < Server.KICK_TIME:
+                    keep_players[hash_id] = player
+            self.players = keep_players
 
     # TODO: add exception handling
     def decode(self, c, args):
@@ -271,10 +280,12 @@ class Server:
         player.sneks = sneks
         player.kinds = kinds
 
-    def register(self, name):  # TODO: add max connections
+    def register(self, name):
         hash_id = random.getrandbits(64).to_bytes(8, 'big')
         if hash_id in self.players:
-            return
+            return b''
+        if len(self.players) > self.max_connections:
+            return b''
         snek = self.engine.create_snek(name=name)
         for player in self.players.values():
             player.sneks[snek] = [[], []]
@@ -377,21 +388,9 @@ class Server:
 
 
 def main():
-    engine = PacManSnekEngine(width=20, height=20, max_food=2, game_tick=0.2)
+    engine = PacManSnekEngine(width=20, height=20, max_food=2, game_tick=0.1)
     server = Server(address=('', 12345), engine=engine)
     server.run()
-
-
-def test():
-    engine = PacManSnekEngine(20, 20, 2, 2)
-    engine.create_snek()
-    while True:
-        print(engine.all_objects)
-        # print(engine.all_blocks)
-        for snek in engine.sneks:
-            print(snek.whole)
-        engine.move()
-        time.sleep(1)
 
 
 if __name__ == '__main__':
