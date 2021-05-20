@@ -4,32 +4,38 @@ import json
 import snekpi
 
 
-# TODO: exceptions
+# TODO: improve exceptions
 
 async def send_command(host, port, c, *args):
     reader, writer = await asyncio.open_connection(host, port)
-    writer.write(c)
-    for arg in args:
-        writer.write(arg)
-    writer.write_eof()
-    await writer.drain()
+    try:
+        writer.write(c)
+        await writer.drain()
+        for arg in args:
+            writer.write(arg)
+            await writer.drain()
+        writer.write_eof()
+        await writer.drain()
 
-    res = await reader.read()
+        res = await reader.read()
 
-    writer.close()
-    await writer.wait_closed()
-
-    return res
+        return res
+    finally:
+        writer.close()
+        await writer.wait_closed()
 
 
 async def register(host, port, name=''):
     hash_id = await send_command(host, port, b'\x00', name.encode('utf-8'))
-
+    if not hash_id:
+        raise ConnectionError('No hash_id received')
     return hash_id
 
 
 async def set_dir(host, port, hash_id, direction):
     ack = await send_command(host, port, b'\x01', hash_id, direction)
+    if ack != b'\x00':
+        raise ConnectionError('Error setting direction')
 
 
 async def get_infos(host, port):
