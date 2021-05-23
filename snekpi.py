@@ -2,6 +2,10 @@ import json
 
 
 class BaseSnek:
+    """Base snek class that other snek classes should inherit from,
+    it exposes self.alive, self.whole and self.data attributes,
+    self.move and self.kill attributes, plus some convenience properties
+    and a __repr__ method"""
     def __init__(self, whole=None, data=()):
         self.alive = True
         if whole is None:
@@ -41,11 +45,16 @@ class BaseSnek:
         return f"$data:{self.data}, whole:{self.whole}$"
 
 
-def get_object_metadata(snek_like_object):
-    alive = int(snek_like_object.alive).to_bytes(1, 'big')
-    data = json.dumps(snek_like_object.data).encode('ascii')
+def encode_json(serializable):
+    data = json.dumps(serializable).encode('ascii')
     data_len = len(data).to_bytes(2, 'big')
-    return alive + data_len + data
+    return data_len + data
+
+
+def encode_object_metadata(snek_like_object):
+    alive = int(snek_like_object.alive).to_bytes(1, 'big')
+    data = encode_json(snek_like_object.data)
+    return alive + data
 
 
 def encode_blocks(new_blocks, old_blocks):
@@ -64,7 +73,7 @@ def encode_blocks(new_blocks, old_blocks):
 
 
 def encode_partial_object(snek_like_object, new_blocks, old_blocks):
-    res = get_object_metadata(snek_like_object)
+    res = encode_object_metadata(snek_like_object)
     res += encode_blocks(new_blocks, old_blocks)
     return res
 
@@ -84,6 +93,12 @@ def encode_partial_list(obj_news_olds):
 
 def encode_whole_list(objs):
     return encode_partial_list(((obj, obj.whole, []) for obj in objs))
+
+
+def decode_json(message):
+    data_len = int.from_bytes(message[:2], 'big')
+    data = json.loads(message[2:data_len + 2].decode('ascii'))
+    return data, message[data_len + 2:]
 
 
 def decode_blocks(message):
@@ -113,9 +128,7 @@ def decode_object(message):
     alive = bool(message[0])
     message = message[1:]
 
-    data_len = int.from_bytes(message[:2], 'big')
-    data = json.loads(message[2:data_len + 2].decode('ascii'))
-    message = message[data_len + 2:]
+    data, message = decode_json(message)
 
     new_blocks, old_blocks, message = decode_blocks(message)
 

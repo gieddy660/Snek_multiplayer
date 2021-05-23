@@ -1,5 +1,4 @@
 import asyncio
-import json
 import random
 import time
 from dataclasses import make_dataclass
@@ -138,7 +137,7 @@ class SnekEngine:
         # create food
         if len(self.foods) < self.target_food:
             food = self.create_food()
-            if food is not None:
+            if food:
                 new_foods[food] = [food.whole, []]
 
         return sneks, {}, {Food: foods}, {Food: new_foods}
@@ -286,7 +285,11 @@ class Server:
             return b''
         if len(self.players) > self.max_connections:
             return b''
+
         snek = self.engine.create_snek(name=name)
+        if not snek:
+            return b''
+
         for player in self.players.values():
             player.sneks[snek] = [[], []]
         player = Server.Player(snek, {}, {}, time.time())
@@ -300,9 +303,8 @@ class Server:
         return b'\x00'
 
     def engine_info(self):
-        data = json.dumps(self.engine.info).encode('ascii')  # move to snekpi?
-        data_len = len(data).to_bytes(2, 'big')
-        return data_len + data
+        encoded_data = snekpi.encode_json(self.engine.info)
+        return encoded_data
 
     def get_state_current(self, player):
         player_snek = player.snek
