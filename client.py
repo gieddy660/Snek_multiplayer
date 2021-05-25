@@ -1,11 +1,16 @@
 import asyncio
 import sys
+from os import system
 
 import keyboard
 
-import aiosnek
+from sneklib import aiosnek
 
 DIRECTION = {'u': b'\x01', 'l': b'\x02', 'd': b'\x03', 'r': b'\x04', 'lol': b'\x05'}
+
+height: int = 20
+width: int = 20
+grid: list
 
 
 async def gather_keyboard(host, port, hash_id):
@@ -32,7 +37,7 @@ async def gather_keyboard(host, port, hash_id):
 
 def draw_screen_whole(blocks):  # TODO: improve
     global grid
-    grid = [[' ' for x in range(20)] for y in range(20)]
+    grid = [[' ' for x in range(width)] for y in range(height)]
     for x, y in blocks:
         grid[y][x] = 1
 
@@ -63,15 +68,28 @@ async def handle_connection(host, port, hash_id):
             sys.exit()
 
         draw_screen_whole(new_blocks)
-        await asyncio.sleep(0.01)
+        system('cls')
+        await asyncio.sleep(0.011)
 
 
 async def main():
+    global width, height
+    global grid
+
     host, port = 'localhost', 12345
     print(host, port)
     hash_id = await aiosnek.register(host, port)
+
+    infos = await aiosnek.get_infos(host, port)
+    if 'width' in infos:
+        width = infos['width']
+    if 'height' in infos:
+        height = infos['height']
+
+    grid = [[' ' for x in range(width)] for y in range(height)]
+
+    print(infos)
     await asyncio.gather(handle_connection(host, port, hash_id), gather_keyboard(host, port, hash_id))
 
 if __name__ == '__main__':
-    grid = [[' ' for x in range(20)] for y in range(20)]
     asyncio.run(main())

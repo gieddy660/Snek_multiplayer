@@ -1,50 +1,6 @@
 import json
 
 
-class BaseSnek:
-    """Base snek class that other snek classes should inherit from,
-    it exposes self.alive, self.whole and self.data attributes,
-    self.move and self.kill attributes, plus some convenience properties
-    and a __repr__ method"""
-    def __init__(self, whole=None, data=()):
-        self.alive = True
-        if whole is None:
-            whole = []
-        self.whole = whole
-        self.data = data
-
-    @property
-    def head(self):
-        return self.whole[:1]
-
-    @property
-    def body(self):
-        return self.whole[1:-1]
-
-    @property
-    def tail(self):
-        return self.whole[-1:]
-
-    @property
-    def future_head(self):
-        return self.head
-
-    @property
-    def future_whole(self):
-        return self.whole
-
-    def move(self):
-        res = ((), ())
-        self.whole = self.future_whole
-        return res
-
-    def kill(self):
-        self.alive = False
-
-    def __repr__(self):
-        return f"$data:{self.data}, whole:{self.whole}$"
-
-
 def encode_json(serializable):
     data = json.dumps(serializable).encode('ascii')
     data_len = len(data).to_bytes(2, 'big')

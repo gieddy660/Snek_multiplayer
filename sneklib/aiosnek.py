@@ -1,6 +1,6 @@
 import asyncio
 
-import snekpi
+from sneklib import snekpi
 
 
 # TODO: improve exceptions
