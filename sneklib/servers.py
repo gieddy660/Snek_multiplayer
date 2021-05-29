@@ -4,6 +4,7 @@ from sneklib.basetypes import Server
 
 
 class AsyncTCPServer(Server):
+    """Server implementation using TCP and asyncio"""
     async def server_loop(self):
         server = await asyncio.start_server(self.dispatch, self.address[0], self.address[1],
                                             backlog=self.max_connections)
@@ -14,7 +15,7 @@ class AsyncTCPServer(Server):
         c = (await reader.readexactly(1))[0]
         _args = await reader.read()  # is it safe to read any amount of bytes?
 
-        answer = self.deal_with_player(c, _args)
+        answer = self.deal_with_request(c, _args)
 
         writer.write(answer)
         await writer.drain()

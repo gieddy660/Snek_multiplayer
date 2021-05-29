@@ -7,10 +7,16 @@ from sneklib import snekpi
 
 
 class Snek:
-    """Base snek class that other snek classes should inherit from,
-    it exposes self.alive, self.whole and self.data attributes,
-    self.move and self.kill methods, plus some convenience properties
-    and a __repr__ method"""
+    """
+    Base snek class that other snek classes should inherit from.
+    It represents a generic snek, the objects that interact in a snek game trough a snek engine.
+    It exposes:
+    self.alive, self.whole and self.data attributes,
+    self.move() and self.kill() methods,
+    self.head, self.body, self.tail, self.future_head, self.future_whole properties,
+    and a self.__repr__() method.
+    """
+
     def __init__(self, whole=None, data=()):
         self.alive = True
         if whole is None:
@@ -20,30 +26,41 @@ class Snek:
 
     @property
     def head(self):
+        """head of the snek, the first element of whole"""
         return self.whole[:1]
 
     @property
     def body(self):
+        """body of the snek, all whole except for head and tail"""
         return self.whole[1:-1]
 
     @property
     def tail(self):
+        """tail of the snek, the last element of whole"""
         return self.whole[-1:]
 
     @property
     def future_head(self):
+        """what head will be when snek moves now"""
         return self.head
 
     @property
     def future_whole(self):
+        """what whole will be if snek moves now"""
         return self.whole
 
     def move(self):
+        """
+        method for making the snek move. It returns two sequences,
+        the first containing the blocks added to whole,
+        the second the blocks removed from whole
+        """
         res = ((), ())
         self.whole = self.future_whole
         return res
 
     def kill(self):
+        """method for killing the snek"""
         self.alive = False
 
     def __repr__(self):
@@ -51,52 +68,82 @@ class Snek:
 
 
 class SnekEngine:
+    """
+    Base snek engine class that other snek engine classes should inherit from.
+    A snek engine is where the actual game runs and where different sneks interact.
+    It exposes:
+    _snek_factory attribute in the class itself (although it can be modified within instances),
+    self.sneks, self.other_sneks and self.game_tick attributes,
+    self.create_snek(*args, **kwargs) and self.move() methods,
+    and self.loop() asynchronous generator.
+    """
+
     _snek_factory = Snek
 
     def __init__(self, sneks=(), other_objs=None, game_tick=1):
         self.sneks = sneks
         if other_objs is None:
             other_objs = {}
-        self.other_objects = other_objs
+        self.other_sneks = other_objs
         self.game_tick = game_tick
 
     @property
     def infos(self):
+        """infos about the game for the server and client; can be anything json serializable"""
         return ()
 
     @property
     def all_blocks(self):
+        """a list of all of the blocks for each snek object in the engine"""
         res = []
         for snek in self.sneks:
             res += snek.whole
-        for kind in self.other_objects.values():
+        for kind in self.other_sneks.values():
             for snek_object in kind:
                 res += snek_object.whole
         return res
 
     @property
     def all_objects(self):
-        return self.sneks, self.other_objects
+        """all of the objects in the engine"""
+        return self.sneks, self.other_sneks
 
     def create_snek(self, *args, **kwargs):
+        """
+        function for creating a new snek and adding it to self.sneks of the engine.
+        It passes *args and **kwargs to the snek factory of the engine
+        """
         res = self._snek_factory(*args, **kwargs)
         self.sneks.append(res)
         return res
 
     def move(self):
+        """makes the game advance by one tick"""
         sneks = {}
         new_sneks = {}
-        kinds = {kind: {} for kind in self.other_objects}
-        new_of_kinds = {kind: {} for kind in self.other_objects}
+        kinds = {kind: {} for kind in self.other_sneks}
+        new_of_kinds = {kind: {} for kind in self.other_sneks}
         return sneks, new_sneks, kinds, new_of_kinds
 
     async def loop(self):
+        """runs the game indefinitely"""
         while 1:
             yield self.move()
             await asyncio.sleep(self.game_tick)
 
 
 class Server:
+    """
+    Base server class. Should be derived only for implementing new communication
+    protocols not already implemented in sneklib/servers.
+    It exposes:
+    DIRECTION, KILL_TIME, KICK_TIME constants (that can be redefined for each server instance),
+    Player dataclass (with attributes snek, sneks kinds and last attributes)
+    self.address, self.engine, self.max_connections, self.players attributes,
+    self.run() and self.deal_with_request(c, _args) methods,
+    and self.loop(), self.user_interface_loop(), self.game_loop() and self.server_loop() asynchronous methods.
+    """
+
     DIRECTION = {b'\x01': 'u', b'\x02': 'l', b'\x03': 'd', b'\x04': 'r'}
     KILL_TIME = 10
     KICK_TIME = KILL_TIME + 10
@@ -108,18 +155,21 @@ class Server:
         self.engine = engine
         self.max_connections = max_connections
         self.players = {}
-        self.cases = {0: self.register, 1: self.set_dir, 2: self.engine_info,
-                      3: self.get_state_current, 4: self.get_state_updated,
-                      254: self.get_state_current_old, 255: self.get_state_updated_old}
+        self._cases = {0: self._register, 1: self._set_dir, 2: self._engine_info,
+                       3: self._get_state_current, 4: self._get_state_updated,
+                       254: self._get_state_current_old, 255: self._get_state_updated_old}
 
     def run(self):
+        """function called to start the server"""
         asyncio.run(self.loop())
 
     async def loop(self):
+        """runs the server indefinitely"""
         await asyncio.gather(self.server_loop(), self.game_loop(), self.user_interface_loop())
 
     # TODO improve UI
     async def user_interface_loop(self):
+        """shows players connected to the server"""
         while 1:
             print('-----------------------------------------------------')
             for hash_id, player in self.players.items():
@@ -129,6 +179,7 @@ class Server:
             await asyncio.sleep(2)
 
     async def game_loop(self):
+        """loop for gathering data from the game engine"""
         async for sneks, new_sneks, kinds, new_of_kinds in self.engine.loop():
             keep_players = {}
             for hash_id, player in self.players.items():
@@ -151,10 +202,35 @@ class Server:
             self.players = keep_players
 
     async def server_loop(self):
+        """server loop to communicate with players"""
         pass
 
     # TODO: add exception handling
-    def decode(self, c, args):
+
+    def deal_with_request(self, c, _args):
+        """
+        Method that should be called by a function that reads requests from a client.
+        Parameter c is the command from the player as an int;
+        _args is the rest of the bytes read from the player.
+        It returns the answer message as bytes that should be relayed as is to the player.
+        """
+        args = self._decode(c, _args)
+        answer = self._cases[c](*args)
+
+        # cleanup for the player (e.g. last, ...)
+        if c in {3, 4, 254, 255}:
+            self._set_player(args[0])
+
+        if c in {1, 3, 4, 254, 255}:
+            args[0].last = time.time()
+
+        if len(args) > 0 and isinstance(args[0], Snek) and not args[0].alive:
+            del self.players[_args[:8]]
+
+        return answer
+
+    def _decode(self, c, args):
+        """decodes the request from the player"""
         if c == 0:
             return args.decode('utf8'),
         elif c == 1:
@@ -175,7 +251,23 @@ class Server:
             return self.players[args[:8]],
         raise LookupError(f'invalid command: {c}')
 
-    def register(self, name):
+    def _set_player(self, player):
+        """resets player.sneks and player.kinds attributes"""
+        sneks_, kinds_ = self.engine.all_objects
+        sneks = {}
+        kinds = {}
+        for snek in sneks_:
+            sneks[snek] = [[], []]
+        for kind, elements in kinds_.items():
+            kinds[kind] = {}
+            for element in elements:
+                kinds[kind][element] = [[], []]
+
+        player.sneks = sneks
+        player.kinds = kinds
+
+    def _register(self, name):
+        """registers player to the server"""
         hash_id = random.getrandbits(64).to_bytes(8, 'big')
         if hash_id in self.players:
             return b''
@@ -189,25 +281,28 @@ class Server:
         for player in self.players.values():
             player.sneks[snek] = [[], []]
         player = Server.Player(snek, {}, {}, time.time())
-        self.name_to_rename(player)
+        self._set_player(player)
         self.players[hash_id] = player
         return hash_id
 
     @staticmethod
-    def set_dir(player, direction):  # add exception handling
+    def _set_dir(player, direction):  # add exception handling
+        """sets player's snek direction"""
         player.snek.dir = direction
         return b'\x00'
 
-    def engine_info(self):
+    def _engine_info(self):
+        """sends infos about the game engine"""
         encoded_data = snekpi.encode_json(self.engine.infos)
         return encoded_data
 
-    def get_state_current(self, player):
+    def _get_state_current(self, player):
+        """sends current state of the game"""
         player_snek = player.snek
         sneks, kinds = self.engine.all_objects
         res = b''
 
-        res += snekpi.encode_whole_object(player_snek)
+        res += snekpi.encode_whole_snek(player_snek)
 
         res += snekpi.encode_whole_list((snek for snek in sneks if snek is not player_snek))
 
@@ -217,13 +312,14 @@ class Server:
         return res
 
     @staticmethod
-    def get_state_updated(player):
+    def _get_state_updated(player):
+        """sends updated state of the game since last time that self.set_player was called on the player"""
         player_snek = player
         sneks = player
         kinds = player
         res = b''
 
-        res += snekpi.encode_partial_object(player_snek, sneks[player_snek][0], sneks[player_snek][1])
+        res += snekpi.encode_partial_snek(player_snek, sneks[player_snek][0], sneks[player_snek][1])
 
         res += snekpi.encode_partial_list(((snek, news, olds) for snek, (news, olds) in sneks.items()))
 
@@ -232,7 +328,8 @@ class Server:
 
         return res
 
-    def get_state_current_old(self, player):
+    def _get_state_current_old(self, player):
+        """sends current blocks in the game"""
         alive = player.snek.alive
         blocks = self.engine.all_blocks
         res = b''
@@ -243,7 +340,8 @@ class Server:
         return res
 
     @staticmethod
-    def get_state_updated_old(player):  # news and olds might contain repeated elements, is that a problem?
+    def _get_state_updated_old(player):  # news and olds might contain repeated elements, is that a problem?
+        """sends new and old blocks since last time that self.set_player was called on the player"""
         alive = player.snek.alive
         news = []
         olds = []
@@ -260,33 +358,3 @@ class Server:
         res += snekpi.encode_blocks(news, olds)
 
         return res
-
-    def name_to_rename(self, player):
-        sneks_, kinds_ = self.engine.all_objects
-        sneks = {}
-        kinds = {}
-        for snek in sneks_:
-            sneks[snek] = [[], []]
-        for kind, elements in kinds_.items():
-            kinds[kind] = {}
-            for element in elements:
-                kinds[kind][element] = [[], []]
-
-        player.sneks = sneks
-        player.kinds = kinds
-
-    def deal_with_player(self, c, _args):
-        args = self.decode(c, _args)
-        answer = self.cases[c](*args)
-
-        # cleanup for the player (e.g. last, ...)
-        if c in {3, 4, 254, 255}:
-            self.name_to_rename(args[0])
-
-        if c in {1, 3, 4, 254, 255}:
-            args[0].last = time.time()
-
-        if len(args) > 0 and isinstance(args[0], Snek) and not args[0].alive:
-            del self.players[_args[:8]]
-
-        return answer
