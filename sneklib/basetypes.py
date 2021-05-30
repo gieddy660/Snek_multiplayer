@@ -2,8 +2,11 @@ import asyncio
 import random
 import time
 from dataclasses import make_dataclass
+from typing import Tuple
 
 from sneklib import snekpi
+
+Block = Tuple[int, int]
 
 
 class Snek:
@@ -80,17 +83,13 @@ class SnekEngine:
 
     _snek_factory = Snek
 
-    def __init__(self, sneks=(), other_objs=None, game_tick=1):
+    def __init__(self, sneks=(), other_objs=None, game_tick=1, infos=()):
         self.sneks = sneks
         if other_objs is None:
             other_objs = {}
         self.other_sneks = other_objs
         self.game_tick = game_tick
-
-    @property
-    def infos(self):
-        """infos about the game for the server and client; can be anything json serializable"""
-        return ()
+        self.infos = infos
 
     @property
     def all_blocks(self):
@@ -132,6 +131,9 @@ class SnekEngine:
             await asyncio.sleep(self.game_tick)
 
 
+Player = make_dataclass('Player', [('snek', Snek), ('sneks', dict), ('kinds', dict), ('last', float)])
+
+
 class Server:
     """
     Base server class. Should be derived only for implementing new communication
@@ -148,16 +150,14 @@ class Server:
     KILL_TIME = 10
     KICK_TIME = KILL_TIME + 10
 
-    Player = make_dataclass('Player', [('snek', Snek), ('sneks', dict), ('kinds', dict), ('last', float)])
-
     def __init__(self, address, engine, max_connections=5):
         self.address = address
-        self.engine = engine
+        self.engine: SnekEngine = engine
         self.max_connections = max_connections
         self.players = {}
-        self._cases = {0: self._register, 1: self._set_dir, 2: self._engine_info,
-                       3: self._get_state_current, 4: self._get_state_updated,
-                       254: self._get_state_current_old, 255: self._get_state_updated_old}
+        self.__cases = {0: self.__register, 1: self.__set_dir, 2: self.__engine_info,
+                        3: self.__get_state_current, 4: self.__get_state_updated,
+                        254: self.__get_state_current_old, 255: self.__get_state_updated_old}
 
     def run(self):
         """function called to start the server"""
@@ -214,12 +214,12 @@ class Server:
         _args is the rest of the bytes read from the player.
         It returns the answer message as bytes that should be relayed as is to the player.
         """
-        args = self._decode(c, _args)
-        answer = self._cases[c](*args)
+        args = self.__decode(c, _args)
+        answer = self.__cases[c](*args)
 
         # cleanup for the player (e.g. last, ...)
         if c in {3, 4, 254, 255}:
-            self._set_player(args[0])
+            self.__set_player(args[0])
 
         if c in {1, 3, 4, 254, 255}:
             args[0].last = time.time()
@@ -229,7 +229,7 @@ class Server:
 
         return answer
 
-    def _decode(self, c, args):
+    def __decode(self, c, args):
         """decodes the request from the player"""
         if c == 0:
             return args.decode('utf8'),
@@ -240,18 +240,18 @@ class Server:
         elif c == 3:
             if args:
                 return self.players[args[:8]],
-            return Server.Player(Snek(), {}, {}, 0),
+            return Player(Snek(), {}, {}, 0),
         elif c == 4:
             return self.players[args[:8]],
         elif c == 254:
             if args:
                 return self.players[args[:8]],
-            return Server.Player(Snek(), {}, {}, 0),
+            return Player(Snek(), {}, {}, 0),
         elif c == 255:
             return self.players[args[:8]],
         raise LookupError(f'invalid command: {c}')
 
-    def _set_player(self, player):
+    def __set_player(self, player):
         """resets player.sneks and player.kinds attributes"""
         sneks_, kinds_ = self.engine.all_objects
         sneks = {}
@@ -266,12 +266,12 @@ class Server:
         player.sneks = sneks
         player.kinds = kinds
 
-    def _register(self, name):
+    def __register(self, name):
         """registers player to the server"""
         hash_id = random.getrandbits(64).to_bytes(8, 'big')
         if hash_id in self.players:
             return b''
-        if len(self.players) > self.max_connections:
+        if len([1 for player in self.players.values() if player.snek.alive]) > self.max_connections:
             return b''
 
         snek = self.engine.create_snek(name=name)
@@ -280,23 +280,23 @@ class Server:
 
         for player in self.players.values():
             player.sneks[snek] = [[], []]
-        player = Server.Player(snek, {}, {}, time.time())
-        self._set_player(player)
+        player = Player(snek, {}, {}, time.time())
+        self.__set_player(player)
         self.players[hash_id] = player
         return hash_id
 
     @staticmethod
-    def _set_dir(player, direction):  # add exception handling
+    def __set_dir(player, direction):  # add exception handling
         """sets player's snek direction"""
         player.snek.dir = direction
         return b'\x00'
 
-    def _engine_info(self):
+    def __engine_info(self):
         """sends infos about the game engine"""
         encoded_data = snekpi.encode_json(self.engine.infos)
         return encoded_data
 
-    def _get_state_current(self, player):
+    def __get_state_current(self, player):
         """sends current state of the game"""
         player_snek = player.snek
         sneks, kinds = self.engine.all_objects
@@ -312,7 +312,7 @@ class Server:
         return res
 
     @staticmethod
-    def _get_state_updated(player):
+    def __get_state_updated(player):
         """sends updated state of the game since last time that self.set_player was called on the player"""
         player_snek = player
         sneks = player
@@ -328,7 +328,7 @@ class Server:
 
         return res
 
-    def _get_state_current_old(self, player):
+    def __get_state_current_old(self, player):
         """sends current blocks in the game"""
         alive = player.snek.alive
         blocks = self.engine.all_blocks
@@ -340,7 +340,7 @@ class Server:
         return res
 
     @staticmethod
-    def _get_state_updated_old(player):  # news and olds might contain repeated elements, is that a problem?
+    def __get_state_updated_old(player):  # news and olds might contain repeated elements, is that a problem?
         """sends new and old blocks since last time that self.set_player was called on the player"""
         alive = player.snek.alive
         news = []

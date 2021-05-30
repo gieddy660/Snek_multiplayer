@@ -22,8 +22,8 @@ class Snek(basetypes.Snek):
 
     @property
     def future_head(self):
-        zip_ = zip(self.head[0], type(self).MOVEMENT[self.dir])
-        t = [tuple(a + b for a, b in zip_)]
+        _zip = zip(self.head[0], type(self).MOVEMENT[self.dir])
+        t = [tuple(a + b for a, b in _zip)]
         return t
 
     @property
@@ -42,7 +42,7 @@ class Snek(basetypes.Snek):
     def __rshift__(self, other):
         if other is self:
             return self.future_head[0] in (other.head + other.body)
-        return self.future_head[0] in (other.future_head + other.head + other.body)
+        return self.future_head[0] in other.future_whole
 
 
 class PacManSnek(Snek):
@@ -77,54 +77,24 @@ class SnekEngine(basetypes.SnekEngine):
         self.width = width
         self.height = height
         self.target_food = max_food
-        super().__init__(sneks, {Food: foods, Wall: walls}, game_tick)
-
-    @property
-    def infos(self):
-        return {'mode': self.mode, 'width': self.width, 'height': self.height}
+        infos = {'mode': self.mode, 'width': self.width, 'height': self.height}
+        super().__init__(sneks, {Food: foods, Wall: walls}, game_tick, infos)
 
     @property
     def foods(self):
-        return self.other_objects[Food]
+        return self.other_sneks[Food]
 
     @foods.setter
     def foods(self, value):
-        self.other_objects[Food] = value
+        self.other_sneks[Food] = value
 
     @property
     def walls(self):
-        return self.other_objects[Wall]
+        return self.other_sneks[Wall]
 
     @walls.setter
     def walls(self, value):
-        self.other_objects[Wall] = value
-
-    def snek_within(self, snek):
-        return 0 <= snek.future_head[0][0] < self.width and 0 <= snek.future_head[0][1] < self.height
-
-    def create_snek(self, *args, **kwargs):
-        t = []
-        for x in range(self.width):
-            for y in range(3, self.height-3):
-                if all((x, y + b) not in self.all_blocks for b in range(3)):
-                    t.append((x, y))
-
-        if t:
-            return super().create_snek(pos=random.choice(t), *args, **kwargs)
-        return None  # IDEA: maybe raise instead
-
-    def create_food(self):
-        t = []
-        for x in range(self.width):
-            for y in range(self.height-3):
-                if (x, y) not in self.all_blocks:
-                    t.append((x, y))
-
-        if t:
-            res = Food(pos=random.choice(t))
-            self.foods.append(res)
-            return res
-        return None  # IDEA: maybe raise instead
+        self.other_sneks[Wall] = value
 
     def move(self):
         # 0: news, 1: olds
@@ -171,6 +141,33 @@ class SnekEngine(basetypes.SnekEngine):
 
         return sneks, {}, {Food: foods}, {Food: new_foods}
 
+    def create_snek(self, *args, **kwargs):
+        t = []
+        for x in range(self.width):
+            for y in range(3, self.height - 3):
+                if all((x, y + b) not in self.all_blocks for b in range(3)):
+                    t.append((x, y))
+
+        if t:
+            return super().create_snek(pos=random.choice(t), *args, **kwargs)
+        return None  # IDEA: maybe raise instead
+
+    def create_food(self):
+        t = []
+        for x in range(self.width):
+            for y in range(self.height - 3):
+                if (x, y) not in self.all_blocks:
+                    t.append((x, y))
+
+        if t:
+            res = Food(pos=random.choice(t))
+            self.foods.append(res)
+            return res
+        return None  # IDEA: maybe raise instead
+
+    def snek_within(self, snek):
+        return 0 <= snek.future_head[0][0] < self.width and 0 <= snek.future_head[0][1] < self.height
+
 
 class PacManSnekEngine(SnekEngine):
     _snek_factory = PacManSnek
@@ -178,7 +175,7 @@ class PacManSnekEngine(SnekEngine):
 
     def __init__(self, width, height, max_food, game_tick, sneks=(), foods=(), walls=()):
         super().__init__(width, height, max_food, game_tick, sneks, foods, walls)
-        self._snek_factory = partial(self._snek_factory, dimensions=(width, height))  # ugly?
+        self._snek_factory = partial(self._snek_factory, dimensions=(width, height))
 
 
 def main():

@@ -4,7 +4,13 @@ from sneklib.basetypes import Server
 
 
 class AsyncTCPServer(Server):
-    """Server implementation using TCP and asyncio"""
+    """
+    Server implementation using TCP and asyncio.
+    If using this implementation address should be a tuple containing:
+    a string with the IP address of the server as first element;
+    a integer with the IP address if the server as second element.
+    """
+
     async def server_loop(self):
         server = await asyncio.start_server(self.dispatch, self.address[0], self.address[1],
                                             backlog=self.max_connections)
