@@ -165,10 +165,10 @@ A player is a dataclass, which represents a player who has registered to the ser
 ### Server
 
 The server is the object that directly communicates with the client. It serves as a bridge between the engine (and
-therefore also the sneks that it contains) and therefore contains methods for generating and providing answers to the
-client requests. These methods are *private* (meaning their names start with two underscores) and shouldn't be accessed
-or modified. For most users there should be no need to subclass from Server, as server implementations are provided
-inside the `servers.py` module.
+therefore also the sneks that it contains) and the players, and therefore contains methods for generating and providing
+answers to the client requests. These methods are *private* (meaning their names start with two underscores) and
+shouldn't be accessed or modified. For most users there should be no need to subclass from Server, as server
+implementations are provided inside the `servers.py` module.
 
 Servers have the following attributes and methods:
 
